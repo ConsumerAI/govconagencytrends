@@ -391,7 +391,7 @@ def inject_styles() -> None:
             max-width: 620px;
         }
         .hero {
-            padding: 30px 34px 28px;
+            padding: 34px 36px 30px;
             border: 1px solid var(--line);
             border-radius: 8px;
             background:
@@ -410,16 +410,28 @@ def inject_styles() -> None:
         }
         .hero h1 {
             color: var(--text);
-            font-size: 46px;
-            line-height: 1.08;
-            font-weight: 850;
+            font-size: 56px;
+            line-height: 1.02;
+            font-weight: 900;
             letter-spacing: 0;
-            margin: 0 0 10px;
+            margin: 0 0 12px;
+            max-width: 1120px;
         }
-        .hero p {
+        .hero .brand-subtitle {
             color: var(--muted);
-            font-size: 15px;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 1.35;
             margin: 0;
+        }
+        @media (max-width: 760px) {
+            .hero {
+                padding: 26px 22px 24px;
+            }
+            .hero h1 {
+                font-size: 34px;
+                line-height: 1.08;
+            }
         }
         .metric-card {
             min-height: 136px;
@@ -1192,7 +1204,7 @@ def main() -> None:
         f"""
         <section class="hero">
             <h1>{agency_header}</h1>
-            <p>GovCon Pulse: Federal Spending Intelligence Hub</p>
+            <p class="brand-subtitle">GovCon Pulse: Federal Spending Intelligence Hub</p>
         </section>
         """,
         unsafe_allow_html=True,
