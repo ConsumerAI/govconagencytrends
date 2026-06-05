@@ -29,6 +29,9 @@ TOP_AGENCIES = [
     "Department of Health and Human Services",
     "Department of Homeland Security",
     "Department of Energy",
+    "National Science Foundation",
+    "Environmental Protection Agency",
+    "Nuclear Regulatory Commission",
     "National Aeronautics and Space Administration",
     "Department of Transportation",
     "Department of Agriculture",
@@ -41,10 +44,51 @@ TOP_AGENCIES = [
     "Department of Education",
     "General Services Administration",
     "Agency for International Development",
-    "Environmental Protection Agency",
     "Social Security Administration",
     "Office of Personnel Management",
 ]
+
+AGENCY_DROPDOWN_TO_FILTER = {
+    "Department of Defense": "Department of Defense",
+    "National Science Foundation": "National Science Foundation",
+    "Environmental Protection Agency": "Environmental Protection Agency",
+    "NASA": "National Aeronautics and Space Administration",
+}
+
+AGENCY_BUREAU_OPTIONS = {
+    "Department of Defense": [
+        ALL_BUREAUS,
+        "Department of the Army",
+        "Department of the Navy",
+        "Department of the Air Force",
+        "Defense Logistics Agency",
+    ],
+    "National Science Foundation": [
+        ALL_BUREAUS,
+        "Directorate for Biological Sciences",
+        "Directorate for Engineering",
+        "Directorate for Computer and Information Science",
+    ],
+    "Environmental Protection Agency": [
+        ALL_BUREAUS,
+        "Office of Land and Emergency Management",
+        "Office of Water",
+        "EPA Region 1",
+    ],
+    "NASA": [
+        ALL_BUREAUS,
+        "NASA Headquarters",
+        "Goddard Space Flight Center",
+        "Kennedy Space Center",
+        "Jet Propulsion Laboratory",
+    ],
+}
+
+BUREAU_DROPDOWN_TO_FILTER = {
+    bureau: bureau
+    for bureaus in AGENCY_BUREAU_OPTIONS.values()
+    for bureau in bureaus
+}
 
 AGENCY_ALIASES = {
     "dod": "Department of Defense",
@@ -56,6 +100,11 @@ AGENCY_ALIASES = {
     "dhs": "Department of Homeland Security",
     "homeland": "Department of Homeland Security",
     "nasa": "National Aeronautics and Space Administration",
+    "national aeronautics and space administration": "National Aeronautics and Space Administration",
+    "nsf": "National Science Foundation",
+    "science foundation": "National Science Foundation",
+    "nrc": "Nuclear Regulatory Commission",
+    "nuclear regulatory": "Nuclear Regulatory Commission",
     "energy": "Department of Energy",
     "doe": "Department of Energy",
     "gsa": "General Services Administration",
@@ -124,6 +173,21 @@ SUBAGENCY_MAP = {
         "Federal Acquisition Service",
         "Public Buildings Service",
     ],
+    "National Science Foundation": [
+        "Directorate for Technology, Innovation and Partnerships",
+        "Directorate for Computer and Information Science and Engineering",
+        "Directorate for Engineering",
+    ],
+    "Environmental Protection Agency": [
+        "Office of Mission Support",
+        "Office of Research and Development",
+        "Office of Air and Radiation",
+    ],
+    "Nuclear Regulatory Commission": [
+        "Office of Nuclear Reactor Regulation",
+        "Office of Nuclear Material Safety and Safeguards",
+        "Office of Nuclear Security and Incident Response",
+    ],
 }
 
 AGENCY_SPEND_BASE = {
@@ -132,6 +196,9 @@ AGENCY_SPEND_BASE = {
     "Department of Health and Human Services": 44_000_000_000,
     "Department of Homeland Security": 28_000_000_000,
     "Department of Energy": 36_000_000_000,
+    "National Science Foundation": 1_700_000_000,
+    "Environmental Protection Agency": 3_500_000_000,
+    "Nuclear Regulatory Commission": 950_000_000,
     "National Aeronautics and Space Administration": 18_000_000_000,
     "Department of Transportation": 16_000_000_000,
     "Department of Agriculture": 12_000_000_000,
@@ -144,7 +211,6 @@ AGENCY_SPEND_BASE = {
     "Department of Education": 5_000_000_000,
     "General Services Administration": 22_000_000_000,
     "Agency for International Development": 7_500_000_000,
-    "Environmental Protection Agency": 3_500_000_000,
     "Social Security Administration": 4_800_000_000,
     "Office of Personnel Management": 2_200_000_000,
 }
@@ -202,8 +268,80 @@ def inject_styles() -> None:
             background: #11131a;
             border-right: 1px solid var(--line);
         }
+        [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+            padding: 24px 18px 28px;
+        }
         [data-testid="stSidebar"] * {
             color: var(--text);
+        }
+        [data-testid="stSidebar"] .stRadio,
+        [data-testid="stSidebar"] .stSelectbox,
+        [data-testid="stSidebar"] .stFileUploader,
+        [data-testid="stSidebar"] .stButton {
+            margin-bottom: 14px;
+        }
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] legend {
+            color: #f4f7fb !important;
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            letter-spacing: 0 !important;
+        }
+        [data-testid="stSidebar"] div[data-baseweb="select"] > div,
+        [data-testid="stSidebar"] div[data-baseweb="select"] *,
+        [data-testid="stSidebar"] div[data-baseweb="input"] *,
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea,
+        [data-testid="stSidebar"] .stFileUploader section,
+        [data-testid="stSidebar"] .stFileUploader section * {
+            color: #1A1A1A !important;
+        }
+        [data-testid="stSidebar"] div[data-baseweb="select"] > div,
+        [data-testid="stSidebar"] input,
+        [data-testid="stSidebar"] textarea {
+            background: #ffffff !important;
+            border-color: rgba(255, 255, 255, 0.42) !important;
+            border-radius: 8px !important;
+            min-height: 44px;
+        }
+        [data-testid="stSidebar"] div[data-baseweb="select"] svg {
+            color: #1A1A1A !important;
+            fill: #1A1A1A !important;
+        }
+        [data-testid="stSidebar"] input::placeholder,
+        [data-testid="stSidebar"] textarea::placeholder {
+            color: #525252 !important;
+            opacity: 1 !important;
+        }
+        div[data-baseweb="popover"] div[role="listbox"],
+        div[data-baseweb="popover"] div[role="option"],
+        div[data-baseweb="popover"] div[role="option"] *,
+        ul[data-testid="stVirtualDropdown"] li,
+        ul[data-testid="stVirtualDropdown"] li * {
+            color: #1A1A1A !important;
+            background-color: #ffffff !important;
+        }
+        [data-testid="stSidebar"] .sidebar-title {
+            color: #f4f7fb;
+            font-size: 22px;
+            font-weight: 850;
+            line-height: 1.12;
+            letter-spacing: 0;
+            margin: 0 0 6px;
+        }
+        [data-testid="stSidebar"] .sidebar-subtitle {
+            color: #aab4c2;
+            font-size: 13px;
+            line-height: 1.35;
+            margin: 0 0 18px;
+        }
+        [data-testid="stSidebar"] .sidebar-section {
+            color: #2dd4bf;
+            font-size: 11px;
+            font-weight: 850;
+            letter-spacing: 0;
+            text-transform: uppercase;
+            margin: 18px 0 8px;
         }
         .hero {
             padding: 30px 34px 28px;
@@ -334,6 +472,24 @@ def normalize_agency_name(value: str | None) -> str:
     return cleaned
 
 
+def display_agency_name(agency_name: str | None) -> str:
+    normalized = normalize_agency_name(agency_name)
+    for display_name, filter_name in AGENCY_DROPDOWN_TO_FILTER.items():
+        if normalized.lower() == filter_name.lower() or normalized.lower() == display_name.lower():
+            return display_name
+    return "Department of Defense"
+
+
+def resolve_agency_filter_name(display_name: str) -> str:
+    return AGENCY_DROPDOWN_TO_FILTER.get(display_name, normalize_agency_name(display_name))
+
+
+def resolve_bureau_filter_name(bureau_name: str | None) -> str | None:
+    if not bureau_name or bureau_name == ALL_BUREAUS:
+        return None
+    return BUREAU_DROPDOWN_TO_FILTER.get(bureau_name, bureau_name)
+
+
 def stable_int(text: str) -> int:
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return int(digest[:12], 16)
@@ -412,9 +568,10 @@ def get_openai_api_key() -> str | None:
 
 
 def agency_filter(agency_name: str, bureau_name: str | None = None) -> list[dict]:
-    if bureau_name and bureau_name != ALL_BUREAUS:
-        return [{"type": "awarding", "tier": "subtier", "name": bureau_name}]
-    return [{"type": "awarding", "tier": "toptier", "name": agency_name}]
+    bureau_filter_name = resolve_bureau_filter_name(bureau_name)
+    if bureau_filter_name:
+        return [{"type": "awarding", "tier": "subtier", "name": bureau_filter_name}]
+    return [{"type": "awarding", "tier": "toptier", "name": normalize_agency_name(agency_name)}]
 
 
 def build_trends_payload(agency_name: str, bureau_name: str | None = None) -> dict:
@@ -711,14 +868,8 @@ def extract_agency_from_document(text: str) -> tuple[str | None, str]:
         return heuristic_agency_match(text), "OpenAI extraction unavailable; local agency match used"
 
 
-def get_bureau_options(agency_name: str) -> list[str]:
-    normalized = normalize_agency_name(agency_name)
-    if normalized in SUBAGENCY_MAP:
-        return [ALL_BUREAUS] + SUBAGENCY_MAP[normalized]
-    for top_agency, bureaus in SUBAGENCY_MAP.items():
-        if top_agency.lower() in normalized.lower() or normalized.lower() in top_agency.lower():
-            return [ALL_BUREAUS] + bureaus
-    return [ALL_BUREAUS]
+def get_bureau_options(agency_display_name: str) -> list[str]:
+    return AGENCY_BUREAU_OPTIONS.get(agency_display_name, [ALL_BUREAUS])
 
 
 def metric_card(label: str, value: str, subtext: str, accent: str) -> None:
@@ -787,7 +938,7 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
     fig.update_layout(
         title=dict(text="Spend Trend", font=dict(size=18, color="#f4f7fb")),
         height=430,
-        margin=dict(l=20, r=24, t=58, b=36),
+        margin=dict(l=20, r=20, t=30, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#dce5ef", family="Inter, Segoe UI, Arial, sans-serif"),
@@ -805,7 +956,7 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
             ticktext=ticktext,
             zeroline=False,
         ),
-        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+        showlegend=False,
     )
     return fig
 
@@ -836,7 +987,7 @@ def make_vendor_chart(df: pd.DataFrame) -> go.Figure:
     fig.update_layout(
         title=dict(text="Top Contractor Leaderboard", font=dict(size=18, color="#f4f7fb")),
         height=430,
-        margin=dict(l=20, r=24, t=58, b=36),
+        margin=dict(l=20, r=20, t=30, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#dce5ef", family="Inter, Segoe UI, Arial, sans-serif"),
@@ -865,46 +1016,31 @@ def main() -> None:
     inject_styles()
 
     if "active_agency" not in st.session_state:
-        st.session_state.active_agency = TOP_AGENCIES[0]
-    if "agency_query" not in st.session_state:
-        st.session_state.agency_query = st.session_state.active_agency
+        st.session_state.active_agency = AGENCY_DROPDOWN_TO_FILTER["Department of Defense"]
 
     with st.sidebar:
-        st.header("Controls")
-        input_mode = st.radio(
-            "Agency Source",
-            ["Manual Input", "Document Uploader"],
-            horizontal=False,
+        st.markdown(
+            """
+            <div class="sidebar-title">Control Panel</div>
+            <div class="sidebar-subtitle">Choose an agency, then narrow the dashboard with its linked bureau and fiscal-year filters.</div>
+            """,
+            unsafe_allow_html=True,
         )
 
-        if input_mode == "Manual Input":
-            search_text = st.text_input("Agency Name", key="agency_query")
-            suggestions = agency_autocomplete(search_text)
-            active = normalize_agency_name(st.session_state.active_agency)
-            if active not in suggestions:
-                suggestions.insert(0, active)
-            selected_agency = st.selectbox(
-                "Awarding Agency",
-                suggestions,
-                index=0,
-            )
-            st.session_state.active_agency = normalize_agency_name(selected_agency)
-        else:
-            uploaded = st.file_uploader("PDF or TXT", type=["pdf", "txt"])
-            if uploaded and st.button("Extract Agency", use_container_width=True):
-                document_text = read_uploaded_document(uploaded)
-                extracted_agency, extraction_source = extract_agency_from_document(document_text)
-                if extracted_agency:
-                    st.session_state.active_agency = extracted_agency
-                    st.session_state.agency_query = extracted_agency
-                    st.success(f"Agency set to {extracted_agency}")
-                else:
-                    st.warning("No formal awarding agency found")
-                st.caption(extraction_source)
+        st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
+        agency_options = list(AGENCY_DROPDOWN_TO_FILTER.keys())
+        active_display_agency = display_agency_name(st.session_state.active_agency)
+        selected_agency = st.selectbox(
+            "Select Federal Agency",
+            agency_options,
+            index=agency_options.index(active_display_agency),
+        )
+        active_agency = resolve_agency_filter_name(selected_agency)
+        st.session_state.active_agency = active_agency
 
-        active_agency = normalize_agency_name(st.session_state.active_agency)
-        bureau_options = get_bureau_options(active_agency)
-        selected_bureau = st.selectbox("Subagency/Bureau", bureau_options)
+        st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
+        bureau_options = get_bureau_options(selected_agency)
+        selected_bureau = st.selectbox("Subagency / Bureau", bureau_options)
 
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
     latest_total_for_vendor = float(trend_df["amount"].iloc[-1]) if not trend_df.empty else 0
@@ -918,7 +1054,7 @@ def main() -> None:
         fiscal_years = sorted(trend_df["fiscal_year"].unique(), reverse=True)
         selected_year = st.selectbox("Fiscal Year", fiscal_years, index=0)
         st.divider()
-        st.caption(f"Active agency: {active_agency}")
+        st.caption(f"Active agency: {selected_agency}")
         if selected_bureau != ALL_BUREAUS:
             st.caption(f"Active bureau: {selected_bureau}")
 
@@ -928,7 +1064,7 @@ def main() -> None:
         else "Realistic fallback data active"
     )
 
-    safe_agency = html.escape(active_agency)
+    safe_agency = html.escape(selected_agency)
     safe_bureau = "" if selected_bureau == ALL_BUREAUS else f" / {html.escape(selected_bureau)}"
     st.markdown(
         f"""
@@ -973,9 +1109,17 @@ def main() -> None:
     st.write("")
     chart_cols = st.columns([1.15, 1])
     with chart_cols[0]:
-        st.plotly_chart(make_trend_chart(trend_df, int(selected_year)), use_container_width=True)
+        st.plotly_chart(
+            make_trend_chart(trend_df, int(selected_year)),
+            use_container_width=True,
+            config={"responsive": True},
+        )
     with chart_cols[1]:
-        st.plotly_chart(make_vendor_chart(vendor_df), use_container_width=True)
+        st.plotly_chart(
+            make_vendor_chart(vendor_df),
+            use_container_width=True,
+            config={"responsive": True},
+        )
 
     with st.expander("API Payloads"):
         st.markdown("Historical Trends")
