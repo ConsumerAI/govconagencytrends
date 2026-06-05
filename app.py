@@ -155,20 +155,29 @@ def fetch_subagencies(toptier_code: str, fiscal_year: int) -> list[str]:
     if not toptier_code:
         return [ALL_BUREAUS]
 
+    all_results = []
+    page = 1
     try:
-        response = requests.get(
-            f"{BASE_URL}/api/v2/agency/{toptier_code}/sub_agency/",
-            params={"fiscal_year": int(fiscal_year)},
-            headers=request_headers(),
-            timeout=18,
-        )
-        response.raise_for_status()
-        results = response.json().get("results") or []
+        while page <= 100:
+            response = requests.get(
+                f"{BASE_URL}/api/v2/agency/{toptier_code}/sub_agency/",
+                params={"fiscal_year": int(fiscal_year), "page": page},
+                headers=request_headers(),
+                timeout=18,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            all_results.extend(payload.get("results") or [])
+
+            page_metadata = payload.get("page_metadata") or {}
+            if not page_metadata.get("hasNext"):
+                break
+            page += 1
     except (requests.RequestException, ValueError, TypeError):
         return [ALL_BUREAUS]
 
     names = []
-    for item in results:
+    for item in all_results:
         if isinstance(item, str):
             names.append(item.strip())
             continue
@@ -366,6 +375,21 @@ def inject_styles() -> None:
         .landing-control-spacer {
             height: clamp(42px, 12vh, 110px);
         }
+        .landing-title {
+            color: var(--text);
+            font-size: 40px;
+            line-height: 1.1;
+            font-weight: 850;
+            letter-spacing: 0;
+            margin: 0 0 12px;
+        }
+        .landing-subtitle {
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.5;
+            margin: 0 auto 22px;
+            max-width: 620px;
+        }
         .hero {
             padding: 30px 34px 28px;
             border: 1px solid var(--line);
@@ -386,15 +410,15 @@ def inject_styles() -> None:
         }
         .hero h1 {
             color: var(--text);
-            font-size: 38px;
+            font-size: 46px;
             line-height: 1.08;
             font-weight: 850;
             letter-spacing: 0;
-            margin: 0 0 12px;
+            margin: 0 0 10px;
         }
         .hero p {
             color: var(--muted);
-            font-size: 16px;
+            font-size: 15px;
             margin: 0;
         }
         .metric-card {
@@ -1018,6 +1042,73 @@ def current_and_previous(df: pd.DataFrame, selected_year: int) -> tuple[float, f
     return current_total, previous_total
 
 
+def hide_sidebar_for_landing() -> None:
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"],
+        [data-testid="collapsedControl"] {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str]:
+    agency_options = agency_names_from_records(agency_records)
+    if not agency_options:
+        agency_records = FALLBACK_AGENCY_RECORDS
+        agency_options = agency_names_from_records(agency_records)
+
+    active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
+    active_agency = active_record["agency_name"]
+    active_toptier_code = active_record["toptier_code"]
+
+    selected_agency = st.selectbox(
+        "Select Federal Agency",
+        agency_options,
+        index=agency_options.index(active_agency),
+    )
+    selected_record = agency_record_by_name(agency_records, selected_agency)
+    active_agency = selected_record["agency_name"]
+    active_toptier_code = selected_record["toptier_code"]
+
+    bureau_slot = st.empty()
+    fiscal_year_slot = st.empty()
+
+    fiscal_year_options = list(range(complete_fiscal_year(), complete_fiscal_year() - 8, -1))
+    selected_year = int(st.session_state.active_fiscal_year)
+    if selected_year not in fiscal_year_options:
+        selected_year = fiscal_year_options[0]
+    with fiscal_year_slot:
+        selected_year = st.selectbox(
+            "Fiscal Year",
+            fiscal_year_options,
+            index=fiscal_year_options.index(selected_year),
+        )
+
+    bureau_options = get_bureau_options(active_toptier_code, selected_year)
+    active_bureau = st.session_state.active_bureau
+    if active_bureau not in bureau_options:
+        active_bureau = ALL_BUREAUS
+
+    with bureau_slot:
+        selected_bureau = st.selectbox(
+            "Subagency / Bureau",
+            bureau_options,
+            index=bureau_options.index(active_bureau),
+        )
+
+    st.session_state.active_agency = active_agency
+    st.session_state.active_toptier_code = active_toptier_code
+    st.session_state.active_bureau = selected_bureau
+    st.session_state.active_fiscal_year = int(selected_year)
+
+    return active_agency, selected_bureau, int(selected_year), active_toptier_code
+
+
 def main() -> None:
     inject_styles()
 
@@ -1025,38 +1116,34 @@ def main() -> None:
         st.session_state.active_agency = DEFAULT_AGENCY_NAME
     if "active_toptier_code" not in st.session_state:
         st.session_state.active_toptier_code = DEFAULT_TOPTIER_CODE
+    if "active_bureau" not in st.session_state:
+        st.session_state.active_bureau = ALL_BUREAUS
+    if "active_fiscal_year" not in st.session_state:
+        st.session_state.active_fiscal_year = complete_fiscal_year()
     if "searched" not in st.session_state:
         st.session_state.searched = False
 
     agency_records = fetch_toptier_agencies()
-    agency_options = agency_names_from_records(agency_records)
     active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
     st.session_state.active_agency = active_record["agency_name"]
     st.session_state.active_toptier_code = active_record["toptier_code"]
 
     if not st.session_state.searched:
+        hide_sidebar_for_landing()
         st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
         _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
         with center_col:
             st.markdown(
                 """
                 <div class="landing-panel">
-                    <div class="eyebrow">Federal Contract Obligations</div>
-                    <h1>GovCon Pulse: Federal Spending Intelligence Hub</h1>
-                    <p>Select a federal agency to generate live spending trends, contractor rankings, and market movement signals from USAspending.gov.</p>
+                    <h1 class="landing-title">Federal Spending Analysis Portal</h1>
+                    <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
             st.write("")
-            selected_agency = st.selectbox(
-                "Select Federal Agency",
-                agency_options,
-                index=agency_options.index(st.session_state.active_agency),
-            )
-            selected_record = agency_record_by_name(agency_records, selected_agency)
-            st.session_state.active_agency = selected_record["agency_name"]
-            st.session_state.active_toptier_code = selected_record["toptier_code"]
+            render_market_selectors(agency_records)
             st.write("")
             if st.button("Generate Market Intelligence", use_container_width=True):
                 st.session_state.searched = True
@@ -1073,22 +1160,10 @@ def main() -> None:
         )
 
         st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
-        selected_agency = st.selectbox(
-            "Select Federal Agency",
-            agency_options,
-            index=agency_options.index(st.session_state.active_agency),
+        active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
+            agency_records
         )
-        selected_record = agency_record_by_name(agency_records, selected_agency)
-        active_agency = selected_record["agency_name"]
-        active_toptier_code = selected_record["toptier_code"]
-        st.session_state.active_agency = active_agency
-        st.session_state.active_toptier_code = active_toptier_code
-
-        st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-        fiscal_year_options = list(range(complete_fiscal_year(), complete_fiscal_year() - 8, -1))
-        selected_year = st.selectbox("Fiscal Year", fiscal_year_options, index=0)
-        bureau_options = get_bureau_options(active_toptier_code, int(selected_year))
-        selected_bureau = st.selectbox("Subagency / Bureau", bureau_options)
+        selected_agency = active_agency
 
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
     latest_total_for_vendor = float(trend_df["amount"].iloc[-1]) if not trend_df.empty else 0
@@ -1112,12 +1187,12 @@ def main() -> None:
 
     safe_agency = html.escape(selected_agency)
     safe_bureau = "" if selected_bureau == ALL_BUREAUS else f" / {html.escape(selected_bureau)}"
+    agency_header = f"{safe_agency}{safe_bureau}"
     st.markdown(
         f"""
         <section class="hero">
-            <div class="eyebrow">Federal Contract Obligations</div>
-            <h1>GovCon Pulse: Federal Spending Intelligence Hub</h1>
-            <p>{safe_agency}{safe_bureau}</p>
+            <h1>{agency_header}</h1>
+            <p>GovCon Pulse: Federal Spending Intelligence Hub</p>
         </section>
         """,
         unsafe_allow_html=True,
