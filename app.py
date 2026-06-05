@@ -287,6 +287,29 @@ def inject_styles() -> None:
             font-weight: 800 !important;
             letter-spacing: 0 !important;
         }
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="select"] *,
+        div[data-baseweb="input"] *,
+        input,
+        textarea {
+            color: #1A1A1A !important;
+        }
+        div[data-baseweb="select"] > div,
+        input,
+        textarea {
+            background: #ffffff !important;
+            border-radius: 8px !important;
+            min-height: 44px;
+        }
+        div[data-baseweb="select"] svg {
+            color: #1A1A1A !important;
+            fill: #1A1A1A !important;
+        }
+        input::placeholder,
+        textarea::placeholder {
+            color: #525252 !important;
+            opacity: 1 !important;
+        }
         [data-testid="stSidebar"] div[data-baseweb="select"] > div,
         [data-testid="stSidebar"] div[data-baseweb="select"] *,
         [data-testid="stSidebar"] div[data-baseweb="input"] *,
@@ -342,6 +365,43 @@ def inject_styles() -> None:
             letter-spacing: 0;
             text-transform: uppercase;
             margin: 18px 0 8px;
+        }
+        .landing-shell {
+            min-height: 72vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 56px 0 32px;
+        }
+        .landing-panel {
+            width: 100%;
+            max-width: 760px;
+            text-align: center;
+            padding: 42px 34px 38px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background:
+                linear-gradient(145deg, rgba(22, 25, 34, 0.96), rgba(31, 36, 48, 0.90)),
+                linear-gradient(90deg, rgba(45, 212, 191, 0.14), rgba(245, 158, 11, 0.08));
+            box-shadow: 0 26px 70px rgba(0, 0, 0, 0.30);
+        }
+        .landing-panel h1 {
+            color: var(--text);
+            font-size: 42px;
+            line-height: 1.08;
+            font-weight: 850;
+            letter-spacing: 0;
+            margin: 0 0 14px;
+        }
+        .landing-panel p {
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1.5;
+            margin: 0 auto;
+            max-width: 620px;
+        }
+        .landing-control-spacer {
+            height: clamp(42px, 12vh, 110px);
         }
         .hero {
             padding: 30px 34px 28px;
@@ -1017,6 +1077,38 @@ def main() -> None:
 
     if "active_agency" not in st.session_state:
         st.session_state.active_agency = AGENCY_DROPDOWN_TO_FILTER["Department of Defense"]
+    if "searched" not in st.session_state:
+        st.session_state.searched = False
+
+    agency_options = list(AGENCY_DROPDOWN_TO_FILTER.keys())
+
+    if not st.session_state.searched:
+        active_display_agency = display_agency_name(st.session_state.active_agency)
+        st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
+        _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
+        with center_col:
+            st.markdown(
+                """
+                <div class="landing-panel">
+                    <div class="eyebrow">Federal Contract Obligations</div>
+                    <h1>GovCon Pulse: Federal Spending Intelligence Hub</h1>
+                    <p>Select a federal agency to generate live spending trends, contractor rankings, and market movement signals from USAspending.gov.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.write("")
+            selected_agency = st.selectbox(
+                "Select Federal Agency",
+                agency_options,
+                index=agency_options.index(active_display_agency),
+            )
+            st.session_state.active_agency = resolve_agency_filter_name(selected_agency)
+            st.write("")
+            if st.button("Generate Market Intelligence", use_container_width=True):
+                st.session_state.searched = True
+                st.rerun()
+        return
 
     with st.sidebar:
         st.markdown(
@@ -1028,7 +1120,6 @@ def main() -> None:
         )
 
         st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
-        agency_options = list(AGENCY_DROPDOWN_TO_FILTER.keys())
         active_display_agency = display_agency_name(st.session_state.active_agency)
         selected_agency = st.selectbox(
             "Select Federal Agency",
