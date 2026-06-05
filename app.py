@@ -1,0 +1,990 @@
+import hashlib
+import html
+import io
+import json
+import os
+from datetime import date
+from pathlib import Path
+
+import pandas as pd
+import plotly.graph_objects as go
+import requests
+import streamlit as st
+from openai import OpenAI
+from pypdf import PdfReader
+
+
+BASE_URL = "https://api.usaspending.gov"
+AWARD_TYPE_CODES = ["A", "B", "C", "D"]
+ALL_BUREAUS = "All Bureaus"
+OPENAI_MODEL = "gpt-4o-mini"
+AGENCY_EXTRACTION_PROMPT = (
+    "Extract the exact formal federal Awarding Agency from this text. "
+    "Return strictly as valid JSON: {'agency': '...'}. If unknown, return null."
+)
+
+TOP_AGENCIES = [
+    "Department of Defense",
+    "Department of Veterans Affairs",
+    "Department of Health and Human Services",
+    "Department of Homeland Security",
+    "Department of Energy",
+    "National Aeronautics and Space Administration",
+    "Department of Transportation",
+    "Department of Agriculture",
+    "Department of Justice",
+    "Department of State",
+    "Department of the Interior",
+    "Department of Commerce",
+    "Department of the Treasury",
+    "Department of Labor",
+    "Department of Education",
+    "General Services Administration",
+    "Agency for International Development",
+    "Environmental Protection Agency",
+    "Social Security Administration",
+    "Office of Personnel Management",
+]
+
+AGENCY_ALIASES = {
+    "dod": "Department of Defense",
+    "defense": "Department of Defense",
+    "va": "Department of Veterans Affairs",
+    "veterans": "Department of Veterans Affairs",
+    "hhs": "Department of Health and Human Services",
+    "health": "Department of Health and Human Services",
+    "dhs": "Department of Homeland Security",
+    "homeland": "Department of Homeland Security",
+    "nasa": "National Aeronautics and Space Administration",
+    "energy": "Department of Energy",
+    "doe": "Department of Energy",
+    "gsa": "General Services Administration",
+    "usaid": "Agency for International Development",
+    "epa": "Environmental Protection Agency",
+}
+
+SUBAGENCY_MAP = {
+    "Department of Defense": [
+        "Department of the Army",
+        "Department of the Navy",
+        "Department of the Air Force",
+        "Defense Logistics Agency",
+        "Defense Advanced Research Projects Agency",
+    ],
+    "Department of Veterans Affairs": [
+        "Veterans Health Administration",
+        "Veterans Benefits Administration",
+        "National Cemetery Administration",
+    ],
+    "Department of Health and Human Services": [
+        "National Institutes of Health",
+        "Centers for Medicare and Medicaid Services",
+        "Centers for Disease Control and Prevention",
+        "Food and Drug Administration",
+    ],
+    "Department of Homeland Security": [
+        "U.S. Customs and Border Protection",
+        "Transportation Security Administration",
+        "Federal Emergency Management Agency",
+        "United States Coast Guard",
+        "Cybersecurity and Infrastructure Security Agency",
+    ],
+    "Department of Energy": [
+        "National Nuclear Security Administration",
+        "Office of Energy Efficiency and Renewable Energy",
+        "Office of Science",
+    ],
+    "National Aeronautics and Space Administration": [
+        "NASA Headquarters",
+        "Goddard Space Flight Center",
+        "Jet Propulsion Laboratory",
+        "Kennedy Space Center",
+    ],
+    "Department of Transportation": [
+        "Federal Aviation Administration",
+        "Federal Highway Administration",
+        "Federal Transit Administration",
+    ],
+    "Department of Agriculture": [
+        "Forest Service",
+        "Food and Nutrition Service",
+        "Agricultural Research Service",
+    ],
+    "Department of Justice": [
+        "Federal Bureau of Investigation",
+        "Bureau of Prisons",
+        "Drug Enforcement Administration",
+    ],
+    "Department of Commerce": [
+        "National Oceanic and Atmospheric Administration",
+        "U.S. Census Bureau",
+        "National Institute of Standards and Technology",
+    ],
+    "General Services Administration": [
+        "Federal Acquisition Service",
+        "Public Buildings Service",
+    ],
+}
+
+AGENCY_SPEND_BASE = {
+    "Department of Defense": 465_000_000_000,
+    "Department of Veterans Affairs": 58_000_000_000,
+    "Department of Health and Human Services": 44_000_000_000,
+    "Department of Homeland Security": 28_000_000_000,
+    "Department of Energy": 36_000_000_000,
+    "National Aeronautics and Space Administration": 18_000_000_000,
+    "Department of Transportation": 16_000_000_000,
+    "Department of Agriculture": 12_000_000_000,
+    "Department of Justice": 11_000_000_000,
+    "Department of State": 9_000_000_000,
+    "Department of the Interior": 7_000_000_000,
+    "Department of Commerce": 8_000_000_000,
+    "Department of the Treasury": 10_000_000_000,
+    "Department of Labor": 6_000_000_000,
+    "Department of Education": 5_000_000_000,
+    "General Services Administration": 22_000_000_000,
+    "Agency for International Development": 7_500_000_000,
+    "Environmental Protection Agency": 3_500_000_000,
+    "Social Security Administration": 4_800_000_000,
+    "Office of Personnel Management": 2_200_000_000,
+}
+
+MOCK_CONTRACTORS = [
+    "Lockheed Martin Corporation",
+    "RTX Corporation",
+    "Leidos Holdings, Inc.",
+    "General Dynamics Corporation",
+    "Booz Allen Hamilton Holding Corporation",
+    "Northrop Grumman Corporation",
+    "Science Applications International Corporation",
+    "The Boeing Company",
+    "CACI International Inc.",
+    "HII Mission Technologies",
+    "Accenture Federal Services LLC",
+    "Deloitte Government & Public Services",
+    "Peraton Inc.",
+    "KBR, Inc.",
+    "L3Harris Technologies, Inc.",
+]
+
+
+st.set_page_config(
+    page_title="GovCon Pulse",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+def inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        :root {
+            --bg: #0b0c10;
+            --panel: #161922;
+            --panel-2: #1f2430;
+            --line: rgba(255, 255, 255, 0.11);
+            --text: #f4f7fb;
+            --muted: #aab4c2;
+            --teal: #2dd4bf;
+            --cyan: #38bdf8;
+            --amber: #f59e0b;
+            --rose: #fb7185;
+        }
+        .stApp {
+            background:
+                linear-gradient(135deg, rgba(45, 212, 191, 0.10), transparent 28%),
+                linear-gradient(315deg, rgba(245, 158, 11, 0.09), transparent 26%),
+                var(--bg);
+            color: var(--text);
+        }
+        [data-testid="stSidebar"] {
+            background: #11131a;
+            border-right: 1px solid var(--line);
+        }
+        [data-testid="stSidebar"] * {
+            color: var(--text);
+        }
+        .hero {
+            padding: 30px 34px 28px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background:
+                linear-gradient(120deg, rgba(22, 25, 34, 0.96), rgba(31, 36, 48, 0.86)),
+                linear-gradient(90deg, rgba(45, 212, 191, 0.14), rgba(251, 113, 133, 0.10));
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+            margin-bottom: 20px;
+        }
+        .eyebrow {
+            color: var(--teal);
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        .hero h1 {
+            color: var(--text);
+            font-size: 38px;
+            line-height: 1.08;
+            font-weight: 850;
+            letter-spacing: 0;
+            margin: 0 0 12px;
+        }
+        .hero p {
+            color: var(--muted);
+            font-size: 16px;
+            margin: 0;
+        }
+        .metric-card {
+            min-height: 136px;
+            padding: 22px 22px 20px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: linear-gradient(180deg, rgba(31, 36, 48, 0.98), rgba(22, 25, 34, 0.98));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 18px 42px rgba(0,0,0,0.20);
+            position: relative;
+            overflow: hidden;
+        }
+        .metric-card:before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent);
+        }
+        .metric-label {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        .metric-value {
+            color: var(--text);
+            font-size: 32px;
+            line-height: 1.05;
+            font-weight: 850;
+            letter-spacing: 0;
+        }
+        .metric-sub {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 12px;
+        }
+        .source-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(22, 25, 34, 0.80);
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            margin: 2px 0 16px;
+        }
+        .source-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: var(--teal);
+            box-shadow: 0 0 18px var(--teal);
+        }
+        .source-dot.mock {
+            background: var(--amber);
+            box-shadow: 0 0 18px var(--amber);
+        }
+        h2, h3, label, .stMarkdown, .stSelectbox, .stTextInput, .stRadio {
+            letter-spacing: 0 !important;
+        }
+        .stButton>button {
+            border-radius: 8px;
+            border: 1px solid rgba(45, 212, 191, 0.45);
+            background: linear-gradient(135deg, #2dd4bf, #38bdf8);
+            color: #061015;
+            font-weight: 800;
+            min-height: 42px;
+        }
+        .stButton>button:hover {
+            border-color: #f59e0b;
+            color: #061015;
+        }
+        [data-testid="stMetricValue"] {
+            color: var(--text);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def normalize_agency_name(value: str | None) -> str:
+    if not value:
+        return TOP_AGENCIES[0]
+    cleaned = " ".join(str(value).strip().split())
+    alias = AGENCY_ALIASES.get(cleaned.lower())
+    if alias:
+        return alias
+    for agency in TOP_AGENCIES:
+        if cleaned.lower() == agency.lower():
+            return agency
+    return cleaned
+
+
+def stable_int(text: str) -> int:
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
+def first_present(mapping: dict, keys: list[str]):
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return None
+
+
+def format_money(value) -> str:
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return "$0"
+    sign = "-" if amount < 0 else ""
+    amount = abs(amount)
+    if amount >= 1_000_000_000_000:
+        return f"{sign}${amount / 1_000_000_000_000:.1f}T"
+    if amount >= 1_000_000_000:
+        return f"{sign}${amount / 1_000_000_000:.1f}B"
+    if amount >= 1_000_000:
+        return f"{sign}${amount / 1_000_000:.0f}M"
+    if amount >= 1_000:
+        return f"{sign}${amount / 1_000:.0f}K"
+    return f"{sign}${amount:,.0f}"
+
+
+def format_count(value) -> str:
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "0"
+
+
+def format_delta(value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:+.1f}%"
+
+
+def money_ticks(max_value: float) -> tuple[list[float], list[str]]:
+    if not max_value or max_value <= 0:
+        return [0], ["$0"]
+    ticks = [max_value * i / 4 for i in range(5)]
+    return ticks, [format_money(tick) for tick in ticks]
+
+
+def get_openai_api_key() -> str | None:
+    try:
+        secret_key = st.secrets.get("OPENAI_API_KEY")
+        if secret_key:
+            return str(secret_key)
+    except Exception:
+        pass
+
+    env_key = os.getenv("OPENAI_API_KEY")
+    if env_key:
+        return env_key
+
+    env_path = Path.cwd() / ".env"
+    if env_path.exists():
+        try:
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() == "OPENAI_API_KEY" and value.strip():
+                    return value.strip().strip('"').strip("'")
+        except OSError:
+            return None
+    return None
+
+
+def agency_filter(agency_name: str, bureau_name: str | None = None) -> list[dict]:
+    if bureau_name and bureau_name != ALL_BUREAUS:
+        return [{"type": "awarding", "tier": "subtier", "name": bureau_name}]
+    return [{"type": "awarding", "tier": "toptier", "name": agency_name}]
+
+
+def build_trends_payload(agency_name: str, bureau_name: str | None = None) -> dict:
+    return {
+        "group": "fiscal_year",
+        "spending_level": "awards",
+        "filters": {
+            "agencies": agency_filter(agency_name, bureau_name),
+            "award_type_codes": AWARD_TYPE_CODES,
+        },
+    }
+
+
+def build_vendor_payload(agency_name: str, bureau_name: str | None = None) -> dict:
+    return {
+        "category": "recipient",
+        "spending_level": "awards",
+        "limit": 10,
+        "page": 1,
+        "filters": {
+            "agencies": agency_filter(agency_name, bureau_name),
+            "award_type_codes": AWARD_TYPE_CODES,
+        },
+    }
+
+
+def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | None]:
+    try:
+        response = requests.post(
+            f"{BASE_URL}{endpoint}",
+            json=payload,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "govcon-pulse-streamlit/1.0",
+            },
+            timeout=18,
+        )
+        response.raise_for_status()
+        return response.json(), None
+    except requests.RequestException as exc:
+        return None, f"{type(exc).__name__}: live USAspending request unavailable"
+    except ValueError:
+        return None, "Invalid JSON response from USAspending"
+
+
+def parse_autocomplete_names(data: dict) -> list[str]:
+    results = data.get("results") or []
+    names: list[str] = []
+    for item in results:
+        if isinstance(item, str):
+            names.append(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        for key in ("name", "agency_name", "toptier_name", "subtier_name"):
+            value = item.get(key)
+            if isinstance(value, str):
+                names.append(value)
+        for nested_key in ("toptier_agency", "subtier_agency", "agency"):
+            nested = item.get(nested_key)
+            if isinstance(nested, dict) and isinstance(nested.get("name"), str):
+                names.append(nested["name"])
+    seen = set()
+    unique = []
+    for name in names:
+        normalized = normalize_agency_name(name)
+        key = normalized.lower()
+        if key not in seen:
+            unique.append(normalized)
+            seen.add(key)
+    return unique[:10]
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def agency_autocomplete(search_text: str) -> list[str]:
+    payload = {"search_text": search_text or "", "limit": 10}
+    data, _ = post_usaspending("/api/v2/autocomplete/awarding_agency/", payload)
+    if data:
+        names = parse_autocomplete_names(data)
+        if names:
+            return names
+
+    needle = (search_text or "").strip().lower()
+    if not needle:
+        return TOP_AGENCIES[:10]
+    filtered = [agency for agency in TOP_AGENCIES if needle in agency.lower()]
+    alias_match = AGENCY_ALIASES.get(needle)
+    if alias_match and alias_match not in filtered:
+        filtered.insert(0, alias_match)
+    return (filtered or TOP_AGENCIES)[:10]
+
+
+def normalize_trend_response(data: dict) -> pd.DataFrame:
+    rows = []
+    for item in data.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        period = item.get("time_period") if isinstance(item.get("time_period"), dict) else {}
+        fiscal_year = (
+            first_present(item, ["fiscal_year", "label", "period", "x_axis"])
+            or period.get("fiscal_year")
+            or period.get("start_date", "")[:4]
+        )
+        amount = first_present(
+            item,
+            ["aggregated_amount", "amount", "total", "obligation", "award_amount"],
+        )
+        try:
+            rows.append(
+                {
+                    "fiscal_year": int(str(fiscal_year).replace("FY", "").strip()),
+                    "amount": float(amount or 0),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return (
+        df.groupby("fiscal_year", as_index=False)["amount"]
+        .sum()
+        .sort_values("fiscal_year")
+    )
+
+
+def normalize_vendor_response(data: dict) -> tuple[pd.DataFrame, int | None]:
+    rows = []
+    for item in data.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        name = first_present(
+            item,
+            [
+                "recipient_name",
+                "name",
+                "label",
+                "category",
+                "recipient",
+                "description",
+            ],
+        )
+        amount = first_present(item, ["amount", "aggregated_amount", "total", "obligation"])
+        if not name:
+            continue
+        try:
+            rows.append({"recipient": str(name), "amount": float(amount or 0)})
+        except (TypeError, ValueError):
+            continue
+
+    metadata = data.get("page_metadata") or data.get("pagination") or {}
+    contractor_count = first_present(
+        metadata,
+        ["total", "total_results", "total_records", "count", "total_entries"],
+    )
+    try:
+        contractor_count = int(contractor_count) if contractor_count is not None else None
+    except (TypeError, ValueError):
+        contractor_count = None
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df, contractor_count
+    df = df.sort_values("amount", ascending=False).head(10)
+    return df, contractor_count
+
+
+def complete_fiscal_year() -> int:
+    today = date.today()
+    return today.year - 1 if today.month < 10 else today.year
+
+
+def mock_trend_data(agency_name: str) -> pd.DataFrame:
+    normalized = normalize_agency_name(agency_name)
+    base = AGENCY_SPEND_BASE.get(normalized)
+    if base is None:
+        base = 4_000_000_000 + (stable_int(normalized) % 26_000_000_000)
+    fiscal_years = list(range(complete_fiscal_year() - 7, complete_fiscal_year() + 1))
+    seed = stable_int(normalized)
+    rows = []
+    for index, fiscal_year in enumerate(fiscal_years):
+        growth = 0.965 + index * 0.018
+        pulse = 0.94 + ((seed >> (index % 8)) & 15) / 120
+        rows.append({"fiscal_year": fiscal_year, "amount": base * growth * pulse})
+    return pd.DataFrame(rows)
+
+
+def mock_vendor_data(agency_name: str, latest_total: float) -> tuple[pd.DataFrame, int]:
+    seed = stable_int(normalize_agency_name(agency_name))
+    contractors = MOCK_CONTRACTORS[:]
+    offset = seed % len(contractors)
+    contractors = contractors[offset:] + contractors[:offset]
+    share_total = latest_total * (0.28 + (seed % 9) / 100)
+    weights = [1 / (rank + 1.4) for rank in range(10)]
+    weight_total = sum(weights)
+    rows = [
+        {
+            "recipient": contractors[rank],
+            "amount": share_total * weights[rank] / weight_total,
+        }
+        for rank in range(10)
+    ]
+    contractor_count = 750 + (seed % 4_800)
+    return pd.DataFrame(rows).sort_values("amount", ascending=False), contractor_count
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_trends(agency_name: str, bureau_name: str | None) -> tuple[pd.DataFrame, dict, str, str | None]:
+    payload = build_trends_payload(agency_name, bureau_name)
+    data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
+    if data:
+        df = normalize_trend_response(data)
+        if not df.empty:
+            return df, payload, "Live USAspending.gov", None
+    return mock_trend_data(agency_name), payload, "Realistic fallback", error or "No trend rows returned"
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_vendors(
+    agency_name: str,
+    bureau_name: str | None,
+    latest_total: float,
+) -> tuple[pd.DataFrame, int, dict, str, str | None]:
+    payload = build_vendor_payload(agency_name, bureau_name)
+    data, error = post_usaspending("/api/v2/search/spending_by_category/recipient/", payload)
+    if data:
+        df, contractor_count = normalize_vendor_response(data)
+        if not df.empty:
+            return (
+                df,
+                contractor_count or len(df["recipient"].unique()),
+                payload,
+                "Live USAspending.gov",
+                None,
+            )
+    df, contractor_count = mock_vendor_data(agency_name, latest_total)
+    return df, contractor_count, payload, "Realistic fallback", error or "No vendor rows returned"
+
+
+def read_uploaded_document(uploaded_file) -> str:
+    data = uploaded_file.getvalue()
+    suffix = Path(uploaded_file.name).suffix.lower()
+    try:
+        if suffix == ".pdf":
+            reader = PdfReader(io.BytesIO(data))
+            pieces = []
+            for page in reader.pages:
+                pieces.append(page.extract_text() or "")
+                if len(" ".join(pieces)) >= 4_000:
+                    break
+            return " ".join(pieces)[:4_000]
+        return data.decode("utf-8", errors="ignore")[:4_000]
+    except Exception:
+        return ""
+
+
+def heuristic_agency_match(text: str) -> str | None:
+    haystack = text.lower()
+    for token, agency in AGENCY_ALIASES.items():
+        if token in haystack:
+            return agency
+    for agency in TOP_AGENCIES:
+        if agency.lower() in haystack:
+            return agency
+    return None
+
+
+def extract_agency_from_document(text: str) -> tuple[str | None, str]:
+    api_key = get_openai_api_key()
+    if not api_key:
+        return heuristic_agency_match(text), "OpenAI key unavailable; local agency match used"
+
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": AGENCY_EXTRACTION_PROMPT},
+                {"role": "user", "content": text[:4_000]},
+            ],
+        )
+        content = response.choices[0].message.content or "null"
+        parsed = json.loads(content)
+        if parsed is None:
+            return heuristic_agency_match(text), "OpenAI returned null; local agency match used"
+        agency = parsed.get("agency") if isinstance(parsed, dict) else None
+        if agency:
+            return normalize_agency_name(agency), "OpenAI extraction"
+        return heuristic_agency_match(text), "OpenAI returned no agency; local agency match used"
+    except Exception:
+        return heuristic_agency_match(text), "OpenAI extraction unavailable; local agency match used"
+
+
+def get_bureau_options(agency_name: str) -> list[str]:
+    normalized = normalize_agency_name(agency_name)
+    if normalized in SUBAGENCY_MAP:
+        return [ALL_BUREAUS] + SUBAGENCY_MAP[normalized]
+    for top_agency, bureaus in SUBAGENCY_MAP.items():
+        if top_agency.lower() in normalized.lower() or normalized.lower() in top_agency.lower():
+            return [ALL_BUREAUS] + bureaus
+    return [ALL_BUREAUS]
+
+
+def metric_card(label: str, value: str, subtext: str, accent: str) -> None:
+    st.markdown(
+        f"""
+        <div class="metric-card" style="--accent: {accent};">
+            <div class="metric-label">{html.escape(label)}</div>
+            <div class="metric-value">{html.escape(value)}</div>
+            <div class="metric-sub">{html.escape(subtext)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def source_chip(label: str) -> None:
+    is_mock = "fallback" in label.lower()
+    dot_class = "source-dot mock" if is_mock else "source-dot"
+    st.markdown(
+        f"""
+        <div class="source-chip">
+            <span class="{dot_class}"></span>
+            <span>{html.escape(label)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
+    chart_df = df.copy()
+    chart_df["display_amount"] = chart_df["amount"].apply(format_money)
+    tickvals, ticktext = money_ticks(chart_df["amount"].max())
+    selected = chart_df[chart_df["fiscal_year"] == selected_year]
+    selected_amount = float(selected["amount"].iloc[0]) if not selected.empty else 0
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df["fiscal_year"],
+            y=chart_df["amount"],
+            customdata=chart_df["display_amount"],
+            mode="lines+markers",
+            line=dict(color="#2dd4bf", width=4, shape="spline"),
+            marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
+            fill="tozeroy",
+            fillcolor="rgba(45, 212, 191, 0.13)",
+            hovertemplate="<b>FY %{x}</b><br>Obligations: %{customdata}<extra></extra>",
+            name="Obligations",
+        )
+    )
+    if selected_amount:
+        fig.add_trace(
+            go.Scatter(
+                x=[selected_year],
+                y=[selected_amount],
+                mode="markers",
+                marker=dict(size=16, color="#f59e0b", line=dict(color="#fff7ed", width=2)),
+                hovertemplate=(
+                    f"<b>Selected FY {selected_year}</b><br>"
+                    f"Obligations: {format_money(selected_amount)}<extra></extra>"
+                ),
+                name="Selected FY",
+            )
+        )
+    fig.update_layout(
+        title=dict(text="Spend Trend", font=dict(size=18, color="#f4f7fb")),
+        height=430,
+        margin=dict(l=20, r=24, t=58, b=36),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#dce5ef", family="Inter, Segoe UI, Arial, sans-serif"),
+        xaxis=dict(
+            title="Fiscal Year",
+            gridcolor="rgba(255,255,255,0.08)",
+            tickmode="linear",
+            dtick=1,
+            zeroline=False,
+        ),
+        yaxis=dict(
+            title="Obligated Spend",
+            gridcolor="rgba(255,255,255,0.08)",
+            tickvals=tickvals,
+            ticktext=ticktext,
+            zeroline=False,
+        ),
+        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+    )
+    return fig
+
+
+def make_vendor_chart(df: pd.DataFrame) -> go.Figure:
+    chart_df = df.sort_values("amount", ascending=True).copy()
+    chart_df["display_amount"] = chart_df["amount"].apply(format_money)
+    tickvals, ticktext = money_ticks(chart_df["amount"].max())
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=chart_df["amount"],
+            y=chart_df["recipient"],
+            customdata=chart_df["display_amount"],
+            orientation="h",
+            marker=dict(
+                color=chart_df["amount"],
+                colorscale=[
+                    [0, "#38bdf8"],
+                    [0.55, "#2dd4bf"],
+                    [1, "#f59e0b"],
+                ],
+                line=dict(color="rgba(255,255,255,0.14)", width=1),
+            ),
+            hovertemplate="<b>%{y}</b><br>Funding: %{customdata}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=dict(text="Top Contractor Leaderboard", font=dict(size=18, color="#f4f7fb")),
+        height=430,
+        margin=dict(l=20, r=24, t=58, b=36),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#dce5ef", family="Inter, Segoe UI, Arial, sans-serif"),
+        xaxis=dict(
+            title="Funding Amount",
+            gridcolor="rgba(255,255,255,0.08)",
+            tickvals=tickvals,
+            ticktext=ticktext,
+            zeroline=False,
+        ),
+        yaxis=dict(title="", gridcolor="rgba(255,255,255,0.04)", automargin=True),
+        showlegend=False,
+    )
+    return fig
+
+
+def current_and_previous(df: pd.DataFrame, selected_year: int) -> tuple[float, float | None]:
+    selected = df[df["fiscal_year"] == selected_year]
+    current_total = float(selected["amount"].iloc[0]) if not selected.empty else 0
+    previous = df[df["fiscal_year"] == selected_year - 1]
+    previous_total = float(previous["amount"].iloc[0]) if not previous.empty else None
+    return current_total, previous_total
+
+
+def main() -> None:
+    inject_styles()
+
+    if "active_agency" not in st.session_state:
+        st.session_state.active_agency = TOP_AGENCIES[0]
+    if "agency_query" not in st.session_state:
+        st.session_state.agency_query = st.session_state.active_agency
+
+    with st.sidebar:
+        st.header("Controls")
+        input_mode = st.radio(
+            "Agency Source",
+            ["Manual Input", "Document Uploader"],
+            horizontal=False,
+        )
+
+        if input_mode == "Manual Input":
+            search_text = st.text_input("Agency Name", key="agency_query")
+            suggestions = agency_autocomplete(search_text)
+            active = normalize_agency_name(st.session_state.active_agency)
+            if active not in suggestions:
+                suggestions.insert(0, active)
+            selected_agency = st.selectbox(
+                "Awarding Agency",
+                suggestions,
+                index=0,
+            )
+            st.session_state.active_agency = normalize_agency_name(selected_agency)
+        else:
+            uploaded = st.file_uploader("PDF or TXT", type=["pdf", "txt"])
+            if uploaded and st.button("Extract Agency", use_container_width=True):
+                document_text = read_uploaded_document(uploaded)
+                extracted_agency, extraction_source = extract_agency_from_document(document_text)
+                if extracted_agency:
+                    st.session_state.active_agency = extracted_agency
+                    st.session_state.agency_query = extracted_agency
+                    st.success(f"Agency set to {extracted_agency}")
+                else:
+                    st.warning("No formal awarding agency found")
+                st.caption(extraction_source)
+
+        active_agency = normalize_agency_name(st.session_state.active_agency)
+        bureau_options = get_bureau_options(active_agency)
+        selected_bureau = st.selectbox("Subagency/Bureau", bureau_options)
+
+    trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
+    latest_total_for_vendor = float(trend_df["amount"].iloc[-1]) if not trend_df.empty else 0
+    vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
+        active_agency,
+        selected_bureau,
+        latest_total_for_vendor,
+    )
+
+    with st.sidebar:
+        fiscal_years = sorted(trend_df["fiscal_year"].unique(), reverse=True)
+        selected_year = st.selectbox("Fiscal Year", fiscal_years, index=0)
+        st.divider()
+        st.caption(f"Active agency: {active_agency}")
+        if selected_bureau != ALL_BUREAUS:
+            st.caption(f"Active bureau: {selected_bureau}")
+
+    source_label = (
+        "Live USAspending.gov"
+        if trend_source.startswith("Live") and vendor_source.startswith("Live")
+        else "Realistic fallback data active"
+    )
+
+    safe_agency = html.escape(active_agency)
+    safe_bureau = "" if selected_bureau == ALL_BUREAUS else f" / {html.escape(selected_bureau)}"
+    st.markdown(
+        f"""
+        <section class="hero">
+            <div class="eyebrow">Federal Contract Obligations</div>
+            <h1>GovCon Pulse: Federal Spending Intelligence Hub</h1>
+            <p>{safe_agency}{safe_bureau}</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    source_chip(source_label)
+
+    current_total, previous_total = current_and_previous(trend_df, int(selected_year))
+    yoy_delta = None
+    if previous_total and previous_total > 0:
+        yoy_delta = ((current_total - previous_total) / previous_total) * 100
+
+    metric_cols = st.columns(3)
+    with metric_cols[0]:
+        metric_card(
+            "Selected FY Total Spend",
+            format_money(current_total),
+            f"FY {selected_year} obligations",
+            "#2dd4bf",
+        )
+    with metric_cols[1]:
+        metric_card(
+            "Year-over-Year Delta",
+            format_delta(yoy_delta),
+            "Compared with prior fiscal year",
+            "#f59e0b" if (yoy_delta or 0) >= 0 else "#fb7185",
+        )
+    with metric_cols[2]:
+        metric_card(
+            "Unique Contractor Count",
+            format_count(contractor_count),
+            "Recipient records from ranking endpoint",
+            "#38bdf8",
+        )
+
+    st.write("")
+    chart_cols = st.columns([1.15, 1])
+    with chart_cols[0]:
+        st.plotly_chart(make_trend_chart(trend_df, int(selected_year)), use_container_width=True)
+    with chart_cols[1]:
+        st.plotly_chart(make_vendor_chart(vendor_df), use_container_width=True)
+
+    with st.expander("API Payloads"):
+        st.markdown("Historical Trends")
+        st.json(trend_payload)
+        st.markdown("Vendor Rankings")
+        st.json(vendor_payload)
+        if trend_error or vendor_error:
+            st.caption("Fallback reason captured without surfacing raw service errors.")
+
+
+if __name__ == "__main__":
+    main()
