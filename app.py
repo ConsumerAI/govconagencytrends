@@ -22,73 +22,15 @@ AGENCY_EXTRACTION_PROMPT = (
     "Extract the exact formal federal Awarding Agency from this text. "
     "Return strictly as valid JSON: {'agency': '...'}. If unknown, return null."
 )
-
-TOP_AGENCIES = [
-    "Department of Defense",
-    "Department of Veterans Affairs",
-    "Department of Health and Human Services",
-    "Department of Homeland Security",
-    "Department of Energy",
-    "National Science Foundation",
-    "Environmental Protection Agency",
-    "Nuclear Regulatory Commission",
-    "National Aeronautics and Space Administration",
-    "Department of Transportation",
-    "Department of Agriculture",
-    "Department of Justice",
-    "Department of State",
-    "Department of the Interior",
-    "Department of Commerce",
-    "Department of the Treasury",
-    "Department of Labor",
-    "Department of Education",
-    "General Services Administration",
-    "Agency for International Development",
-    "Social Security Administration",
-    "Office of Personnel Management",
+DEFAULT_AGENCY_NAME = "Department of Defense"
+DEFAULT_TOPTIER_CODE = "097"
+FALLBACK_AGENCY_RECORDS = [
+    {"agency_name": DEFAULT_AGENCY_NAME, "toptier_code": DEFAULT_TOPTIER_CODE, "abbreviation": "DOD"},
+    {"agency_name": "Department of the Interior", "toptier_code": "014", "abbreviation": "DOI"},
+    {"agency_name": "Environmental Protection Agency", "toptier_code": "020", "abbreviation": "EPA"},
+    {"agency_name": "National Aeronautics and Space Administration", "toptier_code": "080", "abbreviation": "NASA"},
+    {"agency_name": "National Science Foundation", "toptier_code": "490", "abbreviation": "NSF"},
 ]
-
-AGENCY_DROPDOWN_TO_FILTER = {
-    "Department of Defense": "Department of Defense",
-    "National Science Foundation": "National Science Foundation",
-    "Environmental Protection Agency": "Environmental Protection Agency",
-    "NASA": "National Aeronautics and Space Administration",
-}
-
-AGENCY_BUREAU_OPTIONS = {
-    "Department of Defense": [
-        ALL_BUREAUS,
-        "Department of the Army",
-        "Department of the Navy",
-        "Department of the Air Force",
-        "Defense Logistics Agency",
-    ],
-    "National Science Foundation": [
-        ALL_BUREAUS,
-        "Directorate for Biological Sciences",
-        "Directorate for Engineering",
-        "Directorate for Computer and Information Science",
-    ],
-    "Environmental Protection Agency": [
-        ALL_BUREAUS,
-        "Office of Land and Emergency Management",
-        "Office of Water",
-        "EPA Region 1",
-    ],
-    "NASA": [
-        ALL_BUREAUS,
-        "NASA Headquarters",
-        "Goddard Space Flight Center",
-        "Kennedy Space Center",
-        "Jet Propulsion Laboratory",
-    ],
-}
-
-BUREAU_DROPDOWN_TO_FILTER = {
-    bureau: bureau
-    for bureaus in AGENCY_BUREAU_OPTIONS.values()
-    for bureau in bureaus
-}
 
 AGENCY_ALIASES = {
     "dod": "Department of Defense",
@@ -110,84 +52,6 @@ AGENCY_ALIASES = {
     "gsa": "General Services Administration",
     "usaid": "Agency for International Development",
     "epa": "Environmental Protection Agency",
-}
-
-SUBAGENCY_MAP = {
-    "Department of Defense": [
-        "Department of the Army",
-        "Department of the Navy",
-        "Department of the Air Force",
-        "Defense Logistics Agency",
-        "Defense Advanced Research Projects Agency",
-    ],
-    "Department of Veterans Affairs": [
-        "Veterans Health Administration",
-        "Veterans Benefits Administration",
-        "National Cemetery Administration",
-    ],
-    "Department of Health and Human Services": [
-        "National Institutes of Health",
-        "Centers for Medicare and Medicaid Services",
-        "Centers for Disease Control and Prevention",
-        "Food and Drug Administration",
-    ],
-    "Department of Homeland Security": [
-        "U.S. Customs and Border Protection",
-        "Transportation Security Administration",
-        "Federal Emergency Management Agency",
-        "United States Coast Guard",
-        "Cybersecurity and Infrastructure Security Agency",
-    ],
-    "Department of Energy": [
-        "National Nuclear Security Administration",
-        "Office of Energy Efficiency and Renewable Energy",
-        "Office of Science",
-    ],
-    "National Aeronautics and Space Administration": [
-        "NASA Headquarters",
-        "Goddard Space Flight Center",
-        "Jet Propulsion Laboratory",
-        "Kennedy Space Center",
-    ],
-    "Department of Transportation": [
-        "Federal Aviation Administration",
-        "Federal Highway Administration",
-        "Federal Transit Administration",
-    ],
-    "Department of Agriculture": [
-        "Forest Service",
-        "Food and Nutrition Service",
-        "Agricultural Research Service",
-    ],
-    "Department of Justice": [
-        "Federal Bureau of Investigation",
-        "Bureau of Prisons",
-        "Drug Enforcement Administration",
-    ],
-    "Department of Commerce": [
-        "National Oceanic and Atmospheric Administration",
-        "U.S. Census Bureau",
-        "National Institute of Standards and Technology",
-    ],
-    "General Services Administration": [
-        "Federal Acquisition Service",
-        "Public Buildings Service",
-    ],
-    "National Science Foundation": [
-        "Directorate for Technology, Innovation and Partnerships",
-        "Directorate for Computer and Information Science and Engineering",
-        "Directorate for Engineering",
-    ],
-    "Environmental Protection Agency": [
-        "Office of Mission Support",
-        "Office of Research and Development",
-        "Office of Air and Radiation",
-    ],
-    "Nuclear Regulatory Commission": [
-        "Office of Nuclear Reactor Regulation",
-        "Office of Nuclear Material Safety and Safeguards",
-        "Office of Nuclear Security and Incident Response",
-    ],
 }
 
 AGENCY_SPEND_BASE = {
@@ -239,6 +103,105 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def request_headers() -> dict:
+    return {
+        "Accept": "application/json",
+        "User-Agent": "govcon-pulse-streamlit/1.0",
+    }
+
+
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def fetch_toptier_agencies() -> list[dict]:
+    try:
+        response = requests.get(
+            f"{BASE_URL}/api/v2/references/toptier_agencies/",
+            headers=request_headers(),
+            timeout=18,
+        )
+        response.raise_for_status()
+        results = response.json().get("results") or []
+    except (requests.RequestException, ValueError):
+        return FALLBACK_AGENCY_RECORDS
+
+    records = []
+    seen = set()
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("agency_name") or "").strip()
+        code = str(item.get("toptier_code") or "").strip()
+        active_fy = item.get("active_fy")
+        if not name or not code or not active_fy:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        records.append(
+            {
+                "agency_name": name,
+                "toptier_code": code,
+                "abbreviation": str(item.get("abbreviation") or "").strip(),
+            }
+        )
+        seen.add(key)
+
+    return sorted(records, key=lambda record: record["agency_name"]) or FALLBACK_AGENCY_RECORDS
+
+
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def fetch_subagencies(toptier_code: str, fiscal_year: int) -> list[str]:
+    if not toptier_code:
+        return [ALL_BUREAUS]
+
+    try:
+        response = requests.get(
+            f"{BASE_URL}/api/v2/agency/{toptier_code}/sub_agency/",
+            params={"fiscal_year": int(fiscal_year)},
+            headers=request_headers(),
+            timeout=18,
+        )
+        response.raise_for_status()
+        results = response.json().get("results") or []
+    except (requests.RequestException, ValueError, TypeError):
+        return [ALL_BUREAUS]
+
+    names = []
+    for item in results:
+        if isinstance(item, str):
+            names.append(item.strip())
+            continue
+        if not isinstance(item, dict):
+            continue
+        nested = item.get("subtier_agency") or item.get("agency")
+        nested_name = nested.get("name") if isinstance(nested, dict) else None
+        name = (
+            item.get("name")
+            or item.get("agency_name")
+            or item.get("subagency_name")
+            or item.get("sub_agency_name")
+            or item.get("subtier_name")
+            or item.get("bureau_name")
+            or nested_name
+        )
+        if name:
+            names.append(str(name).strip())
+
+    unique_names = sorted({name for name in names if name and name != ALL_BUREAUS})
+    return [ALL_BUREAUS] + unique_names
+
+
+def agency_names_from_records(agency_records: list[dict]) -> list[str]:
+    return [record["agency_name"] for record in agency_records if record.get("agency_name")]
+
+
+def agency_record_by_name(agency_records: list[dict], agency_name: str | None) -> dict:
+    normalized_name = normalize_agency_name(agency_name)
+    for record in agency_records:
+        if record.get("agency_name", "").lower() == normalized_name.lower():
+            return record
+    return agency_records[0] if agency_records else FALLBACK_AGENCY_RECORDS[0]
 
 
 def inject_styles() -> None:
@@ -521,33 +484,18 @@ def inject_styles() -> None:
 
 def normalize_agency_name(value: str | None) -> str:
     if not value:
-        return TOP_AGENCIES[0]
+        return DEFAULT_AGENCY_NAME
     cleaned = " ".join(str(value).strip().split())
     alias = AGENCY_ALIASES.get(cleaned.lower())
     if alias:
         return alias
-    for agency in TOP_AGENCIES:
-        if cleaned.lower() == agency.lower():
-            return agency
     return cleaned
-
-
-def display_agency_name(agency_name: str | None) -> str:
-    normalized = normalize_agency_name(agency_name)
-    for display_name, filter_name in AGENCY_DROPDOWN_TO_FILTER.items():
-        if normalized.lower() == filter_name.lower() or normalized.lower() == display_name.lower():
-            return display_name
-    return "Department of Defense"
-
-
-def resolve_agency_filter_name(display_name: str) -> str:
-    return AGENCY_DROPDOWN_TO_FILTER.get(display_name, normalize_agency_name(display_name))
 
 
 def resolve_bureau_filter_name(bureau_name: str | None) -> str | None:
     if not bureau_name or bureau_name == ALL_BUREAUS:
         return None
-    return BUREAU_DROPDOWN_TO_FILTER.get(bureau_name, bureau_name)
+    return bureau_name
 
 
 def stable_int(text: str) -> int:
@@ -663,10 +611,7 @@ def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | N
         response = requests.post(
             f"{BASE_URL}{endpoint}",
             json=payload,
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "govcon-pulse-streamlit/1.0",
-            },
+            headers=request_headers(),
             timeout=18,
         )
         response.raise_for_status()
@@ -715,13 +660,14 @@ def agency_autocomplete(search_text: str) -> list[str]:
             return names
 
     needle = (search_text or "").strip().lower()
+    live_names = agency_names_from_records(fetch_toptier_agencies())
     if not needle:
-        return TOP_AGENCIES[:10]
-    filtered = [agency for agency in TOP_AGENCIES if needle in agency.lower()]
+        return live_names[:10]
+    filtered = [agency for agency in live_names if needle in agency.lower()]
     alias_match = AGENCY_ALIASES.get(needle)
     if alias_match and alias_match not in filtered:
         filtered.insert(0, alias_match)
-    return (filtered or TOP_AGENCIES)[:10]
+    return (filtered or live_names or [DEFAULT_AGENCY_NAME])[:10]
 
 
 def normalize_trend_response(data: dict) -> pd.DataFrame:
@@ -894,7 +840,7 @@ def heuristic_agency_match(text: str) -> str | None:
     for token, agency in AGENCY_ALIASES.items():
         if token in haystack:
             return agency
-    for agency in TOP_AGENCIES:
+    for agency in agency_names_from_records(fetch_toptier_agencies()):
         if agency.lower() in haystack:
             return agency
     return None
@@ -928,8 +874,8 @@ def extract_agency_from_document(text: str) -> tuple[str | None, str]:
         return heuristic_agency_match(text), "OpenAI extraction unavailable; local agency match used"
 
 
-def get_bureau_options(agency_display_name: str) -> list[str]:
-    return AGENCY_BUREAU_OPTIONS.get(agency_display_name, [ALL_BUREAUS])
+def get_bureau_options(toptier_code: str, fiscal_year: int) -> list[str]:
+    return fetch_subagencies(toptier_code, fiscal_year)
 
 
 def metric_card(label: str, value: str, subtext: str, accent: str) -> None:
@@ -1076,14 +1022,19 @@ def main() -> None:
     inject_styles()
 
     if "active_agency" not in st.session_state:
-        st.session_state.active_agency = AGENCY_DROPDOWN_TO_FILTER["Department of Defense"]
+        st.session_state.active_agency = DEFAULT_AGENCY_NAME
+    if "active_toptier_code" not in st.session_state:
+        st.session_state.active_toptier_code = DEFAULT_TOPTIER_CODE
     if "searched" not in st.session_state:
         st.session_state.searched = False
 
-    agency_options = list(AGENCY_DROPDOWN_TO_FILTER.keys())
+    agency_records = fetch_toptier_agencies()
+    agency_options = agency_names_from_records(agency_records)
+    active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
+    st.session_state.active_agency = active_record["agency_name"]
+    st.session_state.active_toptier_code = active_record["toptier_code"]
 
     if not st.session_state.searched:
-        active_display_agency = display_agency_name(st.session_state.active_agency)
         st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
         _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
         with center_col:
@@ -1101,9 +1052,11 @@ def main() -> None:
             selected_agency = st.selectbox(
                 "Select Federal Agency",
                 agency_options,
-                index=agency_options.index(active_display_agency),
+                index=agency_options.index(st.session_state.active_agency),
             )
-            st.session_state.active_agency = resolve_agency_filter_name(selected_agency)
+            selected_record = agency_record_by_name(agency_records, selected_agency)
+            st.session_state.active_agency = selected_record["agency_name"]
+            st.session_state.active_toptier_code = selected_record["toptier_code"]
             st.write("")
             if st.button("Generate Market Intelligence", use_container_width=True):
                 st.session_state.searched = True
@@ -1120,17 +1073,21 @@ def main() -> None:
         )
 
         st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
-        active_display_agency = display_agency_name(st.session_state.active_agency)
         selected_agency = st.selectbox(
             "Select Federal Agency",
             agency_options,
-            index=agency_options.index(active_display_agency),
+            index=agency_options.index(st.session_state.active_agency),
         )
-        active_agency = resolve_agency_filter_name(selected_agency)
+        selected_record = agency_record_by_name(agency_records, selected_agency)
+        active_agency = selected_record["agency_name"]
+        active_toptier_code = selected_record["toptier_code"]
         st.session_state.active_agency = active_agency
+        st.session_state.active_toptier_code = active_toptier_code
 
         st.markdown('<div class="sidebar-section">Filters</div>', unsafe_allow_html=True)
-        bureau_options = get_bureau_options(selected_agency)
+        fiscal_year_options = list(range(complete_fiscal_year(), complete_fiscal_year() - 8, -1))
+        selected_year = st.selectbox("Fiscal Year", fiscal_year_options, index=0)
+        bureau_options = get_bureau_options(active_toptier_code, int(selected_year))
         selected_bureau = st.selectbox("Subagency / Bureau", bureau_options)
 
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
@@ -1142,8 +1099,6 @@ def main() -> None:
     )
 
     with st.sidebar:
-        fiscal_years = sorted(trend_df["fiscal_year"].unique(), reverse=True)
-        selected_year = st.selectbox("Fiscal Year", fiscal_years, index=0)
         st.divider()
         st.caption(f"Active agency: {selected_agency}")
         if selected_bureau != ALL_BUREAUS:
