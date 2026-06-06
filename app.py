@@ -44,8 +44,7 @@ TRANSACTION_FIELDS = [
     "Award Amount",
     "Action Date",
     "Recipient Name",
-    "Awarding Agency",
-    "Awarding Sub Agency",
+    "Action Type",
 ]
 CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
 AGENCY_ALIASES = {
@@ -1358,11 +1357,18 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     description_text = transaction_df["Description"].fillna("").astype(str).str.upper()
+    action_codes = transaction_df["Action Code"].fillna("").astype(str).str.upper()
     audit_mask = description_text.apply(lambda value: any(term in value for term in CANCELLATION_TERMS))
+    audit_mask = audit_mask | action_codes.isin(TERMINATION_ACTION_MAP.keys())
     audit_df = transaction_df[audit_mask].copy()
     if audit_df.empty:
         return audit_df
-    audit_df["Action Type"] = audit_df["Description"].apply(classify_cancellation_description)
+    audit_df["Action Type"] = audit_df.apply(
+        lambda row: TERMINATION_ACTION_MAP.get(row["Action Code"])
+        or classify_cancellation_description(row["Description"])
+        or row["Action Type"],
+        axis=1,
+    )
     audit_df["Obligation Amount"] = audit_df["Obligation Amount"].apply(format_money)
     return audit_df[
         [
