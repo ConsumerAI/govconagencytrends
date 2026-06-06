@@ -24,6 +24,24 @@ AGENCY_EXTRACTION_PROMPT = (
 )
 DEFAULT_AGENCY_NAME = "Department of Defense"
 DEFAULT_TOPTIER_CODE = "097"
+CRIMSON = "#E11D48"
+TERMINATION_ACTION_MAP = {
+    "E": "Default",
+    "F": "Convenience",
+    "N": "Cancellation",
+}
+TRANSACTION_FIELDS = [
+    "Award ID",
+    "Recipient Name",
+    "Action Date",
+    "Transaction Amount",
+    "Awarding Agency",
+    "Awarding Sub Agency",
+    "Award Type",
+    "Action Type",
+    "Action Type Description",
+    "Description",
+]
 FALLBACK_AGENCY_RECORDS = [
     {"agency_name": DEFAULT_AGENCY_NAME, "toptier_code": DEFAULT_TOPTIER_CODE, "abbreviation": "DOD"},
     {"agency_name": "Department of the Interior", "toptier_code": "014", "abbreviation": "DOI"},
@@ -303,6 +321,12 @@ def inject_styles() -> None:
             color: #1A1A1A !important;
             fill: #1A1A1A !important;
         }
+        [data-testid="stDataFrame"] *,
+        [data-testid="stTable"] *,
+        div[data-testid="stDataFrame"] div,
+        div[data-testid="stDataFrame"] span {
+            color: #1A1A1A !important;
+        }
         [data-testid="stSidebar"] input::placeholder,
         [data-testid="stSidebar"] textarea::placeholder {
             color: #525252 !important;
@@ -459,7 +483,7 @@ def inject_styles() -> None:
             margin-bottom: 12px;
         }
         .metric-value {
-            color: var(--text);
+            color: var(--metric-value-color, var(--text));
             font-size: 32px;
             line-height: 1.05;
             font-weight: 850;
@@ -493,6 +517,13 @@ def inject_styles() -> None:
         .source-dot.mock {
             background: var(--amber);
             box-shadow: 0 0 18px var(--amber);
+        }
+        .audit-heading {
+            color: var(--text);
+            font-size: 22px;
+            font-weight: 850;
+            letter-spacing: 0;
+            margin: 26px 0 12px;
         }
         h2, h3, label, .stMarkdown, .stSelectbox, .stTextInput, .stRadio {
             letter-spacing: 0 !important;
@@ -642,6 +673,31 @@ def build_vendor_payload(agency_name: str, bureau_name: str | None = None) -> di
     }
 
 
+def fiscal_year_date_range(fiscal_year: int) -> tuple[str, str]:
+    return f"{int(fiscal_year) - 1}-10-01", f"{int(fiscal_year)}-09-30"
+
+
+def build_transaction_payload(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+    page: int = 1,
+) -> dict:
+    start_date, end_date = fiscal_year_date_range(fiscal_year)
+    return {
+        "filters": {
+            "agencies": agency_filter(agency_name, bureau_name),
+            "award_type_codes": AWARD_TYPE_CODES,
+            "time_period": [{"start_date": start_date, "end_date": end_date}],
+        },
+        "fields": TRANSACTION_FIELDS,
+        "limit": 100,
+        "page": page,
+        "sort": "Transaction Amount",
+        "order": "asc",
+    }
+
+
 def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | None]:
     try:
         response = requests.post(
@@ -782,6 +838,106 @@ def normalize_vendor_response(data: dict) -> tuple[pd.DataFrame, int | None]:
     return df, contractor_count
 
 
+def parse_currency_amount(value) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    cleaned = str(value).strip().replace("$", "").replace(",", "")
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        cleaned = f"-{cleaned[1:-1]}"
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def parse_action_type_code(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        value = value.get("code") or value.get("id") or value.get("name")
+    text = str(value).strip().upper()
+    return text[:1] if text else ""
+
+
+def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
+    columns = [
+        "Contractor Name",
+        "Subagency / Bureau",
+        "Obligation Amount",
+        "Action Code",
+        "Action Type",
+        "Description",
+    ]
+    normalized_rows = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        amount = parse_currency_amount(
+            first_present(
+                item,
+                [
+                    "Transaction Amount",
+                    "transaction_amount",
+                    "transaction_obligated_amount",
+                    "federal_action_obligation",
+                    "obligation",
+                    "amount",
+                ],
+            )
+        )
+        action_code = parse_action_type_code(
+            first_present(
+                item,
+                ["Action Type", "ActionType", "action_type", "action_type_code", "action_type_code_desc"],
+            )
+        )
+        normalized_rows.append(
+            {
+                "Contractor Name": first_present(
+                    item,
+                    [
+                        "Recipient Name",
+                        "recipient_name",
+                        "Recipient",
+                        "recipient",
+                        "Awardee Name",
+                    ],
+                )
+                or "Unknown Contractor",
+                "Subagency / Bureau": first_present(
+                    item,
+                    [
+                        "Awarding Sub Agency",
+                        "Awarding Subagency",
+                        "Awarding Sub Agency Name",
+                        "awarding_sub_agency",
+                        "awarding_subagency_name",
+                        "subagency_name",
+                    ],
+                )
+                or "Unspecified Bureau",
+                "Obligation Amount": amount,
+                "Action Code": action_code,
+                "Action Type": TERMINATION_ACTION_MAP.get(action_code, action_code or "Unspecified"),
+                "Description": first_present(
+                    item,
+                    [
+                        "Description",
+                        "description",
+                        "Award Description",
+                        "award_description",
+                        "transaction_description",
+                    ],
+                )
+                or "No official transaction description provided",
+            }
+        )
+
+    return pd.DataFrame(normalized_rows, columns=columns)
+
+
 def complete_fiscal_year() -> int:
     today = date.today()
     return today.year - 1 if today.month < 10 else today.year
@@ -854,6 +1010,47 @@ def fetch_vendors(
     return df, contractor_count, payload, "Realistic fallback", error or "No vendor rows returned"
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_transactions(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+) -> tuple[pd.DataFrame, dict, str, str | None]:
+    page = 1
+    all_rows = []
+    first_payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=1)
+    active_payload = first_payload
+
+    while True:
+        payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=page)
+        data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+
+        if not data and page == 1:
+            fallback_payload = dict(payload)
+            fallback_payload.pop("fields", None)
+            data, error = post_usaspending("/api/v2/search/spending_by_transaction/", fallback_payload)
+            active_payload = fallback_payload
+        elif page == 1:
+            active_payload = payload
+
+        if not data:
+            return normalize_transaction_response(all_rows), active_payload, "Unavailable", error
+
+        page_rows = data.get("results") or []
+        all_rows.extend(page_rows)
+
+        page_metadata = data.get("page_metadata") or {}
+        has_next = page_metadata.get("hasNext")
+        if isinstance(has_next, str):
+            has_next = has_next.strip().lower() == "true"
+        if not has_next:
+            break
+
+        page += 1
+
+    return normalize_transaction_response(all_rows), active_payload, "Live USAspending.gov", None
+
+
 def read_uploaded_document(uploaded_file) -> str:
     data = uploaded_file.getvalue()
     suffix = Path(uploaded_file.name).suffix.lower()
@@ -914,10 +1111,17 @@ def get_bureau_options(toptier_code: str, fiscal_year: int) -> list[str]:
     return fetch_subagencies(toptier_code, fiscal_year)
 
 
-def metric_card(label: str, value: str, subtext: str, accent: str) -> None:
+def metric_card(
+    label: str,
+    value: str,
+    subtext: str,
+    accent: str,
+    value_color: str | None = None,
+) -> None:
+    metric_value_color = value_color or "var(--text)"
     st.markdown(
         f"""
-        <div class="metric-card" style="--accent: {accent};">
+        <div class="metric-card" style="--accent: {accent}; --metric-value-color: {metric_value_color};">
             <div class="metric-label">{html.escape(label)}</div>
             <div class="metric-value">{html.escape(value)}</div>
             <div class="metric-sub">{html.escape(subtext)}</div>
@@ -1044,6 +1248,88 @@ def make_vendor_chart(df: pd.DataFrame) -> go.Figure:
         showlegend=False,
     )
     return fig
+
+
+def make_budget_reduction_chart(negative_df: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if negative_df.empty:
+        fig.add_annotation(
+            text="No negative obligations found for this cycle",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color="#dce5ef", size=14),
+        )
+        min_amount = -1
+    else:
+        chart_df = (
+            negative_df.groupby("Contractor Name", as_index=False)["Obligation Amount"]
+            .sum()
+            .sort_values("Obligation Amount", ascending=True)
+            .head(5)
+        )
+        chart_df["display_amount"] = chart_df["Obligation Amount"].apply(format_money)
+        min_amount = float(chart_df["Obligation Amount"].min())
+        fig.add_trace(
+            go.Bar(
+                x=chart_df["Obligation Amount"],
+                y=chart_df["Contractor Name"],
+                customdata=chart_df["display_amount"],
+                orientation="h",
+                marker=dict(color=CRIMSON, line=dict(color="rgba(255,255,255,0.20)", width=1)),
+                hovertemplate="<b>%{y}</b><br>Budget reduction: %{customdata}<extra></extra>",
+            )
+        )
+
+    tickvals = [min_amount * i / 4 for i in range(4, -1, -1)]
+    fig.update_layout(
+        title=dict(text="Top Vendor Budget Reductions", font=dict(size=18, color="#f4f7fb")),
+        height=360,
+        margin=dict(l=20, r=20, t=30, b=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#dce5ef", family="Inter, Segoe UI, Arial, sans-serif"),
+        xaxis=dict(
+            title="Negative Obligation Amount",
+            gridcolor="rgba(255,255,255,0.08)",
+            tickvals=tickvals,
+            ticktext=[format_money(value) for value in tickvals],
+            zeroline=True,
+            zerolinecolor="rgba(255,255,255,0.35)",
+        ),
+        yaxis=dict(title="", gridcolor="rgba(255,255,255,0.04)", automargin=True, autorange="reversed"),
+        showlegend=False,
+    )
+    return fig
+
+
+def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
+    if transaction_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "Contractor Name",
+                "Subagency / Bureau",
+                "Obligation Amount",
+                "Action Type",
+                "Description",
+            ]
+        )
+    audit_df = transaction_df[transaction_df["Action Code"].isin(TERMINATION_ACTION_MAP.keys())].copy()
+    if audit_df.empty:
+        return audit_df
+    audit_df["Action Type"] = audit_df["Action Code"].map(TERMINATION_ACTION_MAP)
+    audit_df["Obligation Amount"] = audit_df["Obligation Amount"].apply(format_money)
+    return audit_df[
+        [
+            "Contractor Name",
+            "Subagency / Bureau",
+            "Obligation Amount",
+            "Action Type",
+            "Description",
+        ]
+    ]
 
 
 def current_and_previous(df: pd.DataFrame, selected_year: int) -> tuple[float, float | None]:
@@ -1184,6 +1470,14 @@ def main() -> None:
         selected_bureau,
         latest_total_for_vendor,
     )
+    transaction_df, transaction_payload, transaction_source, transaction_error = fetch_transactions(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+    )
+    negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
+    clawback_total = float(negative_transaction_df["Obligation Amount"].sum())
+    audit_df = audit_log_dataframe(transaction_df)
 
     with st.sidebar:
         st.divider()
@@ -1193,8 +1487,14 @@ def main() -> None:
 
     source_label = (
         "Live USAspending.gov"
-        if trend_source.startswith("Live") and vendor_source.startswith("Live")
-        else "Realistic fallback data active"
+        if trend_source.startswith("Live")
+        and vendor_source.startswith("Live")
+        and transaction_source.startswith("Live")
+        else (
+            "Live spend data, transaction audit unavailable"
+            if trend_source.startswith("Live") and vendor_source.startswith("Live")
+            else "Realistic fallback data active"
+        )
     )
 
     safe_agency = html.escape(selected_agency)
@@ -1216,7 +1516,7 @@ def main() -> None:
     if previous_total and previous_total > 0:
         yoy_delta = ((current_total - previous_total) / previous_total) * 100
 
-    metric_cols = st.columns(3)
+    metric_cols = st.columns(4)
     with metric_cols[0]:
         metric_card(
             "Selected FY Total Spend",
@@ -1238,6 +1538,14 @@ def main() -> None:
             "Recipient records from ranking endpoint",
             "#38bdf8",
         )
+    with metric_cols[3]:
+        metric_card(
+            "Total Funds Clawed Back",
+            format_money(clawback_total),
+            "Negative transaction obligations",
+            CRIMSON,
+            value_color=CRIMSON if clawback_total < 0 else None,
+        )
 
     st.write("")
     chart_cols = st.columns([1.15, 1])
@@ -1254,13 +1562,35 @@ def main() -> None:
             config={"responsive": True},
         )
 
+    st.plotly_chart(
+        make_budget_reduction_chart(negative_transaction_df),
+        use_container_width=True,
+        config={"responsive": True},
+    )
+
     with st.expander("API Payloads"):
         st.markdown("Historical Trends")
         st.json(trend_payload)
         st.markdown("Vendor Rankings")
         st.json(vendor_payload)
-        if trend_error or vendor_error:
+        st.markdown("Transaction Reductions & Cancellations")
+        st.json(transaction_payload)
+        if trend_error or vendor_error or transaction_error:
             st.caption("Fallback reason captured without surfacing raw service errors.")
+
+    st.markdown(
+        '<div class="audit-heading">⚠️ Formal Contract Cancellations Audit Log</div>',
+        unsafe_allow_html=True,
+    )
+    if audit_df.empty:
+        st.success(
+            "Prudential Alert: Zero formal contract terminations or legal cancellations logged for this cycle."
+        )
+    else:
+        styled_audit_df = audit_df.style.set_properties(
+            **{"color": "#1A1A1A", "background-color": "#FFFFFF"}
+        )
+        st.dataframe(styled_audit_df, use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":
