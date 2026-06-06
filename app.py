@@ -639,8 +639,6 @@ def build_transaction_payload(
         "fields": TRANSACTION_FIELDS,
         "limit": 1000,
         "page": page,
-        "sort": "Award Amount",
-        "order": "asc",
     }
 
 
@@ -923,14 +921,40 @@ def transaction_page_signature(rows: list[dict]) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def bureau_filter_active(bureau_name: str | None) -> bool:
+    return resolve_bureau_filter_name(bureau_name) is not None
+
+
+def dataframe_has_spend(df: pd.DataFrame, amount_column: str) -> bool:
+    if df.empty or amount_column not in df.columns:
+        return False
+    numeric_amounts = pd.to_numeric(df[amount_column], errors="coerce").fillna(0)
+    return bool(numeric_amounts.abs().sum() > 0)
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_trends(agency_name: str, bureau_name: str | None) -> tuple[pd.DataFrame, dict, str, str | None]:
     payload = build_trends_payload(agency_name, bureau_name)
     data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
     if data:
         df = normalize_trend_response(data)
-        if not df.empty:
+        if dataframe_has_spend(df, "amount"):
             return df, payload, "Live USAspending.gov", None
+
+    if bureau_filter_active(bureau_name):
+        fallback_payload = build_trends_payload(agency_name, None)
+        fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_over_time/", fallback_payload)
+        if fallback_data:
+            fallback_df = normalize_trend_response(fallback_data)
+            if dataframe_has_spend(fallback_df, "amount"):
+                return fallback_df, fallback_payload, "Live USAspending.gov (top-tier fallback)", None
+        return (
+            pd.DataFrame(columns=["fiscal_year", "amount"]),
+            fallback_payload,
+            "USAspending.gov error",
+            fallback_error or error or "No trend rows returned",
+        )
+
     return pd.DataFrame(columns=["fiscal_year", "amount"]), payload, "USAspending.gov error", error or "No trend rows returned"
 
 
@@ -943,7 +967,7 @@ def fetch_vendors(
     data, error = post_usaspending("/api/v2/search/spending_by_category/recipient/", payload)
     if data:
         df, contractor_count = normalize_vendor_response(data)
-        if not df.empty:
+        if dataframe_has_spend(df, "amount"):
             return (
                 df,
                 contractor_count or len(df["recipient"].unique()),
@@ -951,7 +975,85 @@ def fetch_vendors(
                 "Live USAspending.gov",
                 None,
             )
+
+    if bureau_filter_active(bureau_name):
+        fallback_payload = build_vendor_payload(agency_name, None)
+        fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_by_category/recipient/", fallback_payload)
+        if fallback_data:
+            fallback_df, fallback_contractor_count = normalize_vendor_response(fallback_data)
+            if dataframe_has_spend(fallback_df, "amount"):
+                return (
+                    fallback_df,
+                    fallback_contractor_count or len(fallback_df["recipient"].unique()),
+                    fallback_payload,
+                    "Live USAspending.gov (top-tier fallback)",
+                    None,
+                )
+        return (
+            pd.DataFrame(columns=["recipient", "amount"]),
+            0,
+            fallback_payload,
+            "USAspending.gov error",
+            fallback_error or error or "No vendor rows returned",
+        )
+
     return pd.DataFrame(columns=["recipient", "amount"]), 0, payload, "USAspending.gov error", error or "No vendor rows returned"
+
+
+def fetch_transaction_pages(
+    agency_name: str,
+    bureau_name: str | None,
+    start_date: str,
+    end_date: str,
+    progress_text,
+) -> tuple[list[dict], dict, str | None]:
+    max_pages = MAX_TRANSACTION_PAGES
+    master_rows = []
+    payload_log = build_transaction_payload(agency_name, bureau_name, start_date, end_date, page=1)
+    first_error = None
+    total_records = 0
+    seen_page_signatures = set()
+
+    page = 1
+    has_next = True
+    while has_next and page <= max_pages:
+        progress_text.info(
+            f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+        )
+        payload = build_transaction_payload(
+            agency_name,
+            bureau_name,
+            start_date,
+            end_date,
+            page=page,
+        )
+        data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+        if not data:
+            first_error = first_error or error or f"Transaction page {page} returned no data"
+            break
+
+        page_rows = data.get("results") or []
+        if not page_rows:
+            break
+
+        signature = transaction_page_signature(page_rows)
+        if signature in seen_page_signatures:
+            first_error = first_error or f"Duplicate transaction page detected at page {page}; synchronization stopped safely"
+            break
+        seen_page_signatures.add(signature)
+
+        master_rows.extend(page_rows)
+        total_records += len(page_rows)
+        progress_text.info(
+            f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+        )
+        has_next = response_has_next(data.get("page_metadata") or {})
+        page += 1
+
+    if has_next and page > max_pages:
+        first_error = first_error or f"Transaction pagination stopped at the {max_pages:,}-page safety cap"
+
+    return master_rows, payload_log, first_error
 
 
 def fetch_transactions(
@@ -960,58 +1062,41 @@ def fetch_transactions(
     fiscal_year: int,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
     start_date, end_date = fiscal_year_date_range(fiscal_year)
-    max_pages = MAX_TRANSACTION_PAGES
-    master_rows = []
-    payload_log = build_transaction_payload(agency_name, bureau_name, start_date, end_date, page=1)
-    first_error = None
-    total_records = 0
-    seen_page_signatures = set()
     progress_text = st.empty()
 
     try:
-        page = 1
-        has_next = True
-        while has_next and page <= max_pages:
-            progress_text.info(
-                f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
-            )
-            payload = build_transaction_payload(
+        master_rows, payload_log, first_error = fetch_transaction_pages(
+            agency_name,
+            bureau_name,
+            start_date,
+            end_date,
+            progress_text,
+        )
+        transaction_df = normalize_transaction_response(master_rows)
+
+        if bureau_filter_active(bureau_name) and not dataframe_has_spend(transaction_df, "Obligation Amount"):
+            fallback_rows, fallback_payload, fallback_error = fetch_transaction_pages(
                 agency_name,
-                bureau_name,
+                None,
                 start_date,
                 end_date,
-                page=page,
+                progress_text,
             )
-            data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
-            if not data:
-                first_error = first_error or error or f"Transaction page {page} returned no data"
-                break
-
-            page_rows = data.get("results") or []
-            if not page_rows:
-                break
-
-            signature = transaction_page_signature(page_rows)
-            if signature in seen_page_signatures:
-                first_error = first_error or f"Duplicate transaction page detected at page {page}; synchronization stopped safely"
-                break
-            seen_page_signatures.add(signature)
-
-            master_rows.extend(page_rows)
-            total_records += len(page_rows)
-            progress_text.info(
-                f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+            fallback_df = normalize_transaction_response(fallback_rows)
+            if dataframe_has_spend(fallback_df, "Obligation Amount"):
+                fallback_source = "Live USAspending.gov (top-tier fallback)" if fallback_error is None else "Partial USAspending.gov (top-tier fallback)"
+                return fallback_df, fallback_payload, fallback_source, fallback_error
+            return (
+                fallback_df,
+                fallback_payload,
+                "USAspending.gov error",
+                fallback_error or first_error or "No transaction rows returned",
             )
-            has_next = response_has_next(data.get("page_metadata") or {})
-            page += 1
-
-        if has_next and page > max_pages:
-            first_error = first_error or f"Transaction pagination stopped at the {max_pages:,}-page safety cap"
     finally:
         progress_text.empty()
 
     source = "Live USAspending.gov" if first_error is None else "Partial USAspending.gov"
-    return normalize_transaction_response(master_rows), payload_log, source, first_error
+    return transaction_df, payload_log, source, first_error
 
 
 def read_uploaded_document(uploaded_file) -> str:
