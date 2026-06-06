@@ -656,7 +656,8 @@ def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | N
         if endpoint == "/api/v2/search/spending_by_transaction/":
             print("--- USASPENDING API DIAGNOSTIC LOG ---")
             print(e.response.text)
-        return None, f"{type(e).__name__}: live USAspending request unavailable"
+        error_detail = e.response.text if e.response else str(e)
+        return None, f"HTTPError Details: {error_detail}"
     except requests.RequestException as exc:
         return None, f"{type(exc).__name__}: live USAspending request unavailable"
     except ValueError:
