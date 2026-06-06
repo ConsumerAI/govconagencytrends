@@ -634,7 +634,7 @@ def build_transaction_payload(
         "filters": {
             "agencies": agency_filter(agency_name, bureau_name),
             "award_type_codes": AWARD_TYPE_CODES,
-            "date_range": {"start_date": start_date, "end_date": end_date},
+            "time_period": [{"start_date": start_date, "end_date": end_date}],
         },
         "fields": TRANSACTION_FIELDS,
         "limit": 1000,
@@ -960,19 +960,9 @@ def fetch_transactions(
     fiscal_year: int,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
     start_date, end_date = fiscal_year_date_range(fiscal_year)
+    max_pages = MAX_TRANSACTION_PAGES
     master_rows = []
-    payload_log = {
-        "strategy": "fiscal_year_single_window_capped_pagination",
-        "fiscal_year": int(fiscal_year),
-        "fields": TRANSACTION_FIELDS,
-        "date_range": {"start_date": start_date, "end_date": end_date},
-        "limit": 1000,
-        "max_pages": MAX_TRANSACTION_PAGES,
-        "filters": {
-            "agencies": agency_filter(agency_name, bureau_name),
-            "award_type_codes": AWARD_TYPE_CODES,
-        },
-    }
+    payload_log = build_transaction_payload(agency_name, bureau_name, start_date, end_date, page=1)
     first_error = None
     total_records = 0
     seen_page_signatures = set()
@@ -981,7 +971,7 @@ def fetch_transactions(
     try:
         page = 1
         has_next = True
-        while has_next and page <= MAX_TRANSACTION_PAGES:
+        while has_next and page <= max_pages:
             progress_text.info(
                 f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
             )
@@ -1015,8 +1005,8 @@ def fetch_transactions(
             has_next = response_has_next(data.get("page_metadata") or {})
             page += 1
 
-        if has_next and page > MAX_TRANSACTION_PAGES:
-            first_error = first_error or f"Transaction pagination stopped at the {MAX_TRANSACTION_PAGES:,}-page safety cap"
+        if has_next and page > max_pages:
+            first_error = first_error or f"Transaction pagination stopped at the {max_pages:,}-page safety cap"
     finally:
         progress_text.empty()
 
