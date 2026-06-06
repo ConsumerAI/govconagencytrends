@@ -1051,6 +1051,73 @@ def fetch_transactions(
     return normalize_transaction_response(all_rows), active_payload, "Live USAspending.gov", None
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_dual_spend_trend(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_years: tuple[int, ...],
+) -> pd.DataFrame:
+    transaction_frames = []
+    for fiscal_year in fiscal_years:
+        page = 1
+        year_rows = []
+        while True:
+            payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=page)
+            data, _error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+            if not data and page == 1:
+                fallback_payload = dict(payload)
+                fallback_payload.pop("fields", None)
+                data, _error = post_usaspending(
+                    "/api/v2/search/spending_by_transaction/",
+                    fallback_payload,
+                )
+            if not data:
+                break
+
+            year_rows.extend(data.get("results") or [])
+            page_metadata = data.get("page_metadata") or {}
+            has_next = page_metadata.get("hasNext")
+            if isinstance(has_next, str):
+                has_next = has_next.strip().lower() == "true"
+            if not has_next:
+                break
+            page += 1
+
+        year_df = normalize_transaction_response(year_rows)
+        if not year_df.empty:
+            year_df["Fiscal Year"] = int(fiscal_year)
+            transaction_frames.append(year_df)
+
+    if not transaction_frames:
+        return pd.DataFrame(
+            {
+                "fiscal_year": list(fiscal_years),
+                "gross_positive_obligations": [0.0] * len(fiscal_years),
+                "gross_deobligations_clawbacks": [0.0] * len(fiscal_years),
+            }
+        )
+
+    transaction_df = pd.concat(transaction_frames, ignore_index=True)
+    grouped_rows = []
+    for fiscal_year, year_df in transaction_df.groupby("Fiscal Year"):
+        amounts = year_df["Obligation Amount"]
+        grouped_rows.append(
+            {
+                "fiscal_year": int(fiscal_year),
+                "gross_positive_obligations": float(amounts[amounts > 0].sum()),
+                "gross_deobligations_clawbacks": float(abs(amounts[amounts < 0].sum())),
+            }
+        )
+
+    grouped_df = pd.DataFrame(grouped_rows)
+    timeline_df = pd.DataFrame({"fiscal_year": list(fiscal_years)})
+    return (
+        timeline_df.merge(grouped_df, on="fiscal_year", how="left")
+        .fillna(0)
+        .sort_values("fiscal_year")
+    )
+
+
 def read_uploaded_document(uploaded_file) -> str:
     data = uploaded_file.getvalue()
     suffix = Path(uploaded_file.name).suffix.lower()
@@ -1147,40 +1214,39 @@ def source_chip(label: str) -> None:
 
 def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
     chart_df = df.copy()
-    chart_df["display_amount"] = chart_df["amount"].apply(format_money)
-    tickvals, ticktext = money_ticks(chart_df["amount"].max())
-    selected = chart_df[chart_df["fiscal_year"] == selected_year]
-    selected_amount = float(selected["amount"].iloc[0]) if not selected.empty else 0
+    chart_df["positive_display"] = chart_df["gross_positive_obligations"].apply(format_money)
+    chart_df["clawback_display"] = chart_df["gross_deobligations_clawbacks"].apply(format_money)
+    max_value = max(
+        float(chart_df["gross_positive_obligations"].max() or 0),
+        float(chart_df["gross_deobligations_clawbacks"].max() or 0),
+    )
+    tickvals, ticktext = money_ticks(max_value)
 
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
             x=chart_df["fiscal_year"],
-            y=chart_df["amount"],
-            customdata=chart_df["display_amount"],
+            y=chart_df["gross_positive_obligations"],
+            customdata=chart_df["positive_display"],
             mode="lines+markers",
             line=dict(color="#2dd4bf", width=4, shape="spline"),
             marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
-            fill="tozeroy",
-            fillcolor="rgba(45, 212, 191, 0.13)",
-            hovertemplate="<b>FY %{x}</b><br>Obligations: %{customdata}<extra></extra>",
-            name="Obligations",
+            hovertemplate="<b>FY %{x}</b><br>Gross Positive Obligations: %{customdata}<extra></extra>",
+            name="Gross Positive Obligations",
         )
     )
-    if selected_amount:
-        fig.add_trace(
-            go.Scatter(
-                x=[selected_year],
-                y=[selected_amount],
-                mode="markers",
-                marker=dict(size=16, color="#f59e0b", line=dict(color="#fff7ed", width=2)),
-                hovertemplate=(
-                    f"<b>Selected FY {selected_year}</b><br>"
-                    f"Obligations: {format_money(selected_amount)}<extra></extra>"
-                ),
-                name="Selected FY",
-            )
+    fig.add_trace(
+        go.Scatter(
+            x=chart_df["fiscal_year"],
+            y=chart_df["gross_deobligations_clawbacks"],
+            customdata=chart_df["clawback_display"],
+            mode="lines+markers",
+            line=dict(color=CRIMSON, width=4, shape="spline"),
+            marker=dict(size=9, color="#f4f7fb", line=dict(color=CRIMSON, width=2)),
+            hovertemplate="<b>FY %{x}</b><br>Gross De-obligations / Clawbacks: %{customdata}<extra></extra>",
+            name="Gross De-obligations / Clawbacks",
         )
+    )
     fig.update_layout(
         title=dict(text="Spend Trend", font=dict(size=18, color="#f4f7fb")),
         height=430,
@@ -1202,7 +1268,7 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
             ticktext=ticktext,
             zeroline=False,
         ),
-        showlegend=False,
+        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
     )
     return fig
 
@@ -1464,6 +1530,8 @@ def main() -> None:
         selected_agency = active_agency
 
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
+    trend_fiscal_years = tuple(int(year) for year in trend_df["fiscal_year"].sort_values().tolist())
+    dual_trend_df = fetch_dual_spend_trend(active_agency, selected_bureau, trend_fiscal_years)
     latest_total_for_vendor = float(trend_df["amount"].iloc[-1]) if not trend_df.empty else 0
     vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
         active_agency,
@@ -1551,7 +1619,7 @@ def main() -> None:
     chart_cols = st.columns([1.15, 1])
     with chart_cols[0]:
         st.plotly_chart(
-            make_trend_chart(trend_df, int(selected_year)),
+            make_trend_chart(dual_trend_df, int(selected_year)),
             use_container_width=True,
             config={"responsive": True},
         )
