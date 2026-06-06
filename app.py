@@ -1598,11 +1598,9 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             st.write("")
-            with st.form("search_form"):
-                render_market_selectors(agency_records)
-                st.write("")
-                submitted = st.form_submit_button("Run Data Analysis", use_container_width=True)
-            if submitted:
+            render_market_selectors(agency_records)
+            st.write("")
+            if st.button("Run Data Analysis", use_container_width=True):
                 st.session_state.searched = True
                 st.rerun()
         return
