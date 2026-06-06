@@ -1,4 +1,3 @@
-import calendar
 import hashlib
 import html
 import io
@@ -25,8 +24,14 @@ AGENCY_EXTRACTION_PROMPT = (
 )
 DEFAULT_AGENCY_NAME = "Department of Defense"
 DEFAULT_TOPTIER_CODE = "097"
+DEFAULT_AGENCY_RECORD = {
+    "agency_name": DEFAULT_AGENCY_NAME,
+    "toptier_code": DEFAULT_TOPTIER_CODE,
+    "abbreviation": "DOD",
+}
 CRIMSON = "#E11D48"
 SYNC_ICON = "\U0001F504"
+MAX_TRANSACTION_PAGES = 30
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
@@ -43,14 +48,6 @@ TRANSACTION_FIELDS = [
     "Awarding Sub Agency",
 ]
 CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
-FALLBACK_AGENCY_RECORDS = [
-    {"agency_name": DEFAULT_AGENCY_NAME, "toptier_code": DEFAULT_TOPTIER_CODE, "abbreviation": "DOD"},
-    {"agency_name": "Department of the Interior", "toptier_code": "014", "abbreviation": "DOI"},
-    {"agency_name": "Environmental Protection Agency", "toptier_code": "020", "abbreviation": "EPA"},
-    {"agency_name": "National Aeronautics and Space Administration", "toptier_code": "080", "abbreviation": "NASA"},
-    {"agency_name": "National Science Foundation", "toptier_code": "490", "abbreviation": "NSF"},
-]
-
 AGENCY_ALIASES = {
     "dod": "Department of Defense",
     "defense": "Department of Defense",
@@ -72,49 +69,6 @@ AGENCY_ALIASES = {
     "usaid": "Agency for International Development",
     "epa": "Environmental Protection Agency",
 }
-
-AGENCY_SPEND_BASE = {
-    "Department of Defense": 465_000_000_000,
-    "Department of Veterans Affairs": 58_000_000_000,
-    "Department of Health and Human Services": 44_000_000_000,
-    "Department of Homeland Security": 28_000_000_000,
-    "Department of Energy": 36_000_000_000,
-    "National Science Foundation": 1_700_000_000,
-    "Environmental Protection Agency": 3_500_000_000,
-    "Nuclear Regulatory Commission": 950_000_000,
-    "National Aeronautics and Space Administration": 18_000_000_000,
-    "Department of Transportation": 16_000_000_000,
-    "Department of Agriculture": 12_000_000_000,
-    "Department of Justice": 11_000_000_000,
-    "Department of State": 9_000_000_000,
-    "Department of the Interior": 7_000_000_000,
-    "Department of Commerce": 8_000_000_000,
-    "Department of the Treasury": 10_000_000_000,
-    "Department of Labor": 6_000_000_000,
-    "Department of Education": 5_000_000_000,
-    "General Services Administration": 22_000_000_000,
-    "Agency for International Development": 7_500_000_000,
-    "Social Security Administration": 4_800_000_000,
-    "Office of Personnel Management": 2_200_000_000,
-}
-
-MOCK_CONTRACTORS = [
-    "Lockheed Martin Corporation",
-    "RTX Corporation",
-    "Leidos Holdings, Inc.",
-    "General Dynamics Corporation",
-    "Booz Allen Hamilton Holding Corporation",
-    "Northrop Grumman Corporation",
-    "Science Applications International Corporation",
-    "The Boeing Company",
-    "CACI International Inc.",
-    "HII Mission Technologies",
-    "Accenture Federal Services LLC",
-    "Deloitte Government & Public Services",
-    "Peraton Inc.",
-    "KBR, Inc.",
-    "L3Harris Technologies, Inc.",
-]
 
 
 st.set_page_config(
@@ -142,7 +96,7 @@ def fetch_toptier_agencies() -> list[dict]:
         response.raise_for_status()
         results = response.json().get("results") or []
     except (requests.RequestException, ValueError):
-        return FALLBACK_AGENCY_RECORDS
+        return []
 
     records = []
     seen = set()
@@ -166,7 +120,7 @@ def fetch_toptier_agencies() -> list[dict]:
         )
         seen.add(key)
 
-    return sorted(records, key=lambda record: record["agency_name"]) or FALLBACK_AGENCY_RECORDS
+    return sorted(records, key=lambda record: record["agency_name"])
 
 
 @st.cache_data(ttl=60 * 60, show_spinner=False)
@@ -229,7 +183,7 @@ def agency_record_by_name(agency_records: list[dict], agency_name: str | None) -
     for record in agency_records:
         if record.get("agency_name", "").lower() == normalized_name.lower():
             return record
-    return agency_records[0] if agency_records else FALLBACK_AGENCY_RECORDS[0]
+    return agency_records[0] if agency_records else DEFAULT_AGENCY_RECORD
 
 
 def inject_styles() -> None:
@@ -515,10 +469,6 @@ def inject_styles() -> None:
             background: var(--teal);
             box-shadow: 0 0 18px var(--teal);
         }
-        .source-dot.mock {
-            background: var(--amber);
-            box-shadow: 0 0 18px var(--amber);
-        }
         .audit-heading {
             color: var(--text);
             font-size: 22px;
@@ -564,11 +514,6 @@ def resolve_bureau_filter_name(bureau_name: str | None) -> str | None:
     if not bureau_name or bureau_name == ALL_BUREAUS:
         return None
     return bureau_name
-
-
-def stable_int(text: str) -> int:
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return int(digest[:12], 16)
 
 
 def first_present(mapping: dict, keys: list[str]):
@@ -678,20 +623,6 @@ def fiscal_year_date_range(fiscal_year: int) -> tuple[str, str]:
     return f"{int(fiscal_year) - 1}-10-01", f"{int(fiscal_year)}-09-30"
 
 
-def fiscal_year_month_ranges(fiscal_year: int) -> list[tuple[str, str]]:
-    ranges = []
-    year = int(fiscal_year) - 1
-    month = 10
-    for _index in range(12):
-        last_day = calendar.monthrange(year, month)[1]
-        ranges.append((f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day:02d}"))
-        month += 1
-        if month == 13:
-            month = 1
-            year += 1
-    return ranges
-
-
 def build_transaction_payload(
     agency_name: str,
     bureau_name: str | None,
@@ -727,40 +658,6 @@ def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | N
         return None, f"{type(exc).__name__}: live USAspending request unavailable"
     except ValueError:
         return None, "Invalid JSON response from USAspending"
-
-
-def transaction_payload_time_period_fallback(payload: dict) -> dict:
-    fallback_payload = {
-        **payload,
-        "filters": dict(payload.get("filters") or {}),
-    }
-    date_range = fallback_payload["filters"].pop("date_range", None)
-    if date_range:
-        fallback_payload["filters"]["time_period"] = [
-            {
-                "start_date": date_range.get("start_date"),
-                "end_date": date_range.get("end_date"),
-            }
-        ]
-    return fallback_payload
-
-
-def post_transaction_payload(payload: dict) -> tuple[dict | None, str | None]:
-    data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
-    if data:
-        return data, None
-
-    fallback_payload = transaction_payload_time_period_fallback(payload)
-    if fallback_payload != payload:
-        fallback_data, fallback_error = post_usaspending(
-            "/api/v2/search/spending_by_transaction/",
-            fallback_payload,
-        )
-        if fallback_data:
-            return fallback_data, None
-        return None, fallback_error or error
-
-    return None, error
 
 
 def parse_autocomplete_names(data: dict) -> list[str]:
@@ -808,7 +705,7 @@ def agency_autocomplete(search_text: str) -> list[str]:
     alias_match = AGENCY_ALIASES.get(needle)
     if alias_match and alias_match not in filtered:
         filtered.insert(0, alias_match)
-    return (filtered or live_names or [DEFAULT_AGENCY_NAME])[:10]
+    return (filtered or live_names)[:10]
 
 
 def normalize_trend_response(data: dict) -> pd.DataFrame:
@@ -1009,38 +906,16 @@ def complete_fiscal_year() -> int:
     return today.year - 1 if today.month < 10 else today.year
 
 
-def mock_trend_data(agency_name: str) -> pd.DataFrame:
-    normalized = normalize_agency_name(agency_name)
-    base = AGENCY_SPEND_BASE.get(normalized)
-    if base is None:
-        base = 4_000_000_000 + (stable_int(normalized) % 26_000_000_000)
-    fiscal_years = list(range(complete_fiscal_year() - 7, complete_fiscal_year() + 1))
-    seed = stable_int(normalized)
-    rows = []
-    for index, fiscal_year in enumerate(fiscal_years):
-        growth = 0.965 + index * 0.018
-        pulse = 0.94 + ((seed >> (index % 8)) & 15) / 120
-        rows.append({"fiscal_year": fiscal_year, "amount": base * growth * pulse})
-    return pd.DataFrame(rows)
+def response_has_next(page_metadata: dict) -> bool:
+    has_next = page_metadata.get("hasNext")
+    if isinstance(has_next, str):
+        return has_next.strip().lower() == "true"
+    return bool(has_next)
 
 
-def mock_vendor_data(agency_name: str, latest_total: float) -> tuple[pd.DataFrame, int]:
-    seed = stable_int(normalize_agency_name(agency_name))
-    contractors = MOCK_CONTRACTORS[:]
-    offset = seed % len(contractors)
-    contractors = contractors[offset:] + contractors[:offset]
-    share_total = latest_total * (0.28 + (seed % 9) / 100)
-    weights = [1 / (rank + 1.4) for rank in range(10)]
-    weight_total = sum(weights)
-    rows = [
-        {
-            "recipient": contractors[rank],
-            "amount": share_total * weights[rank] / weight_total,
-        }
-        for rank in range(10)
-    ]
-    contractor_count = 750 + (seed % 4_800)
-    return pd.DataFrame(rows).sort_values("amount", ascending=False), contractor_count
+def transaction_page_signature(rows: list[dict]) -> str:
+    serialized = json.dumps(rows, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1051,14 +926,13 @@ def fetch_trends(agency_name: str, bureau_name: str | None) -> tuple[pd.DataFram
         df = normalize_trend_response(data)
         if not df.empty:
             return df, payload, "Live USAspending.gov", None
-    return mock_trend_data(agency_name), payload, "Realistic fallback", error or "No trend rows returned"
+    return pd.DataFrame(columns=["fiscal_year", "amount"]), payload, "USAspending.gov error", error or "No trend rows returned"
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_vendors(
     agency_name: str,
     bureau_name: str | None,
-    latest_total: float,
 ) -> tuple[pd.DataFrame, int, dict, str, str | None]:
     payload = build_vendor_payload(agency_name, bureau_name)
     data, error = post_usaspending("/api/v2/search/spending_by_category/recipient/", payload)
@@ -1072,23 +946,23 @@ def fetch_vendors(
                 "Live USAspending.gov",
                 None,
             )
-    df, contractor_count = mock_vendor_data(agency_name, latest_total)
-    return df, contractor_count, payload, "Realistic fallback", error or "No vendor rows returned"
+    return pd.DataFrame(columns=["recipient", "amount"]), 0, payload, "USAspending.gov error", error or "No vendor rows returned"
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
 def fetch_transactions(
     agency_name: str,
     bureau_name: str | None,
     fiscal_year: int,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
+    start_date, end_date = fiscal_year_date_range(fiscal_year)
     master_rows = []
-    monthly_ranges = fiscal_year_month_ranges(fiscal_year)
     payload_log = {
-        "strategy": "monthly_date_slicing",
+        "strategy": "fiscal_year_single_window_capped_pagination",
         "fiscal_year": int(fiscal_year),
         "fields": TRANSACTION_FIELDS,
-        "date_ranges": [{"start_date": start, "end_date": end} for start, end in monthly_ranges],
+        "date_range": {"start_date": start_date, "end_date": end_date},
+        "limit": 1000,
+        "max_pages": MAX_TRANSACTION_PAGES,
         "filters": {
             "agencies": agency_filter(agency_name, bureau_name),
             "award_type_codes": AWARD_TYPE_CODES,
@@ -1096,115 +970,53 @@ def fetch_transactions(
     }
     first_error = None
     total_records = 0
+    seen_page_signatures = set()
     progress_text = st.empty()
 
     try:
-        for _month_index, (start_date, end_date) in enumerate(monthly_ranges, start=1):
+        page = 1
+        has_next = True
+        while has_next and page <= MAX_TRANSACTION_PAGES:
             progress_text.info(
                 f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
             )
-            page = 1
-            while True:
-                progress_text.info(
-                    f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
-                )
-                payload = build_transaction_payload(
-                    agency_name,
-                    bureau_name,
-                    start_date,
-                    end_date,
-                    page=page,
-                )
-                data, error = post_transaction_payload(payload)
-                if not data:
-                    first_error = first_error or error
-                    break
+            payload = build_transaction_payload(
+                agency_name,
+                bureau_name,
+                start_date,
+                end_date,
+                page=page,
+            )
+            data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+            if not data:
+                first_error = first_error or error or f"Transaction page {page} returned no data"
+                break
 
-                page_rows = data.get("results") or []
-                master_rows.extend(page_rows)
-                total_records += len(page_rows)
-                progress_text.info(
-                    f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
-                )
-                page_metadata = data.get("page_metadata") or {}
-                has_next = page_metadata.get("hasNext")
-                if isinstance(has_next, str):
-                    has_next = has_next.strip().lower() == "true"
-                if not has_next:
-                    break
-                page += 1
+            page_rows = data.get("results") or []
+            if not page_rows:
+                break
+
+            signature = transaction_page_signature(page_rows)
+            if signature in seen_page_signatures:
+                first_error = first_error or f"Duplicate transaction page detected at page {page}; synchronization stopped safely"
+                break
+            seen_page_signatures.add(signature)
+
+            master_rows.extend(page_rows)
+            total_records += len(page_rows)
+            progress_text.info(
+                f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+            )
+            has_next = response_has_next(data.get("page_metadata") or {})
+            page += 1
+
+        if has_next and page > MAX_TRANSACTION_PAGES:
+            first_error = first_error or f"Transaction pagination stopped at the {MAX_TRANSACTION_PAGES:,}-page safety cap"
     finally:
         progress_text.empty()
 
     source = "Live USAspending.gov" if first_error is None else "Partial USAspending.gov"
     return normalize_transaction_response(master_rows), payload_log, source, first_error
-
-
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_dual_spend_trend(
-    agency_name: str,
-    bureau_name: str | None,
-    fiscal_years: tuple[int, ...],
-) -> pd.DataFrame:
-    transaction_frames = []
-    for fiscal_year in fiscal_years:
-        year_rows = []
-        for start_date, end_date in fiscal_year_month_ranges(fiscal_year):
-            page = 1
-            while True:
-                payload = build_transaction_payload(
-                    agency_name,
-                    bureau_name,
-                    start_date,
-                    end_date,
-                    page=page,
-                )
-                data, _error = post_transaction_payload(payload)
-                if not data:
-                    break
-
-                year_rows.extend(data.get("results") or [])
-                page_metadata = data.get("page_metadata") or {}
-                has_next = page_metadata.get("hasNext")
-                if isinstance(has_next, str):
-                    has_next = has_next.strip().lower() == "true"
-                if not has_next:
-                    break
-                page += 1
-
-        year_df = normalize_transaction_response(year_rows)
-        if not year_df.empty:
-            year_df["Fiscal Year"] = int(fiscal_year)
-            transaction_frames.append(year_df)
-
-    if not transaction_frames:
-        return pd.DataFrame(
-            {
-                "fiscal_year": list(fiscal_years),
-                "gross_positive_obligations": [0.0] * len(fiscal_years),
-                "gross_deobligations_clawbacks": [0.0] * len(fiscal_years),
-            }
-        )
-
-    transaction_df = pd.concat(transaction_frames, ignore_index=True)
-    grouped_rows = []
-    for fiscal_year, year_df in transaction_df.groupby("Fiscal Year"):
-        amounts = year_df["Obligation Amount"]
-        grouped_rows.append(
-            {
-                "fiscal_year": int(fiscal_year),
-                "gross_positive_obligations": float(amounts[amounts > 0].sum()),
-                "gross_deobligations_clawbacks": float(abs(amounts[amounts < 0].sum())),
-            }
-        )
-
-    grouped_df = pd.DataFrame(grouped_rows)
-    timeline_df = pd.DataFrame({"fiscal_year": list(fiscal_years)})
-    return (
-        timeline_df.merge(grouped_df, on="fiscal_year", how="left")
-        .fillna(0)
-        .sort_values("fiscal_year")
-    )
 
 
 def read_uploaded_document(uploaded_file) -> str:
@@ -1288,12 +1100,10 @@ def metric_card(
 
 
 def source_chip(label: str) -> None:
-    is_mock = "fallback" in label.lower()
-    dot_class = "source-dot mock" if is_mock else "source-dot"
     st.markdown(
         f"""
         <div class="source-chip">
-            <span class="{dot_class}"></span>
+            <span class="source-dot"></span>
             <span>{html.escape(label)}</span>
         </div>
         """,
@@ -1303,39 +1113,34 @@ def source_chip(label: str) -> None:
 
 def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
     chart_df = df.copy()
-    chart_df["positive_display"] = chart_df["gross_positive_obligations"].apply(format_money)
-    chart_df["clawback_display"] = chart_df["gross_deobligations_clawbacks"].apply(format_money)
-    max_value = max(
-        float(chart_df["gross_positive_obligations"].max() or 0),
-        float(chart_df["gross_deobligations_clawbacks"].max() or 0),
-    )
+    chart_df["display_amount"] = chart_df["amount"].apply(format_money)
+    max_value = float(chart_df["amount"].max() or 0) if not chart_df.empty else 0
     tickvals, ticktext = money_ticks(max_value)
 
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=chart_df["fiscal_year"],
-            y=chart_df["gross_positive_obligations"],
-            customdata=chart_df["positive_display"],
-            mode="lines+markers",
-            line=dict(color="#2dd4bf", width=4, shape="spline"),
-            marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
-            hovertemplate="<b>FY %{x}</b><br>Gross Positive Obligations: %{customdata}<extra></extra>",
-            name="Gross Positive Obligations",
+    if chart_df.empty:
+        fig.add_annotation(
+            text="Spend trend unavailable from USAspending.gov",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color="#dce5ef", size=14),
         )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=chart_df["fiscal_year"],
-            y=chart_df["gross_deobligations_clawbacks"],
-            customdata=chart_df["clawback_display"],
-            mode="lines+markers",
-            line=dict(color=CRIMSON, width=4, shape="spline"),
-            marker=dict(size=9, color="#f4f7fb", line=dict(color=CRIMSON, width=2)),
-            hovertemplate="<b>FY %{x}</b><br>Gross De-obligations / Clawbacks: %{customdata}<extra></extra>",
-            name="Gross De-obligations / Clawbacks",
+    else:
+        fig.add_trace(
+            go.Scatter(
+                x=chart_df["fiscal_year"],
+                y=chart_df["amount"],
+                customdata=chart_df["display_amount"],
+                mode="lines+markers",
+                line=dict(color="#2dd4bf", width=4, shape="spline"),
+                marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
+                hovertemplate="<b>FY %{x}</b><br>Obligated Spend: %{customdata}<extra></extra>",
+                name="Obligated Spend",
+            )
         )
-    )
     fig.update_layout(
         title=dict(text="Spend Trend", font=dict(size=18, color="#f4f7fb")),
         height=430,
@@ -1357,7 +1162,7 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
             ticktext=ticktext,
             zeroline=False,
         ),
-        legend=dict(orientation="h", y=1.08, x=1, xanchor="right"),
+        showlegend=False,
     )
     return fig
 
@@ -1514,8 +1319,8 @@ def hide_sidebar_for_landing() -> None:
 def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str]:
     agency_options = agency_names_from_records(agency_records)
     if not agency_options:
-        agency_records = FALLBACK_AGENCY_RECORDS
-        agency_options = agency_names_from_records(agency_records)
+        st.error("USAspending agency registry is unavailable. Please refresh and try again.")
+        st.stop()
 
     active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
     active_agency = active_record["agency_name"]
@@ -1579,6 +1384,9 @@ def main() -> None:
         st.session_state.searched = False
 
     agency_records = fetch_toptier_agencies()
+    if not agency_records:
+        st.error("USAspending agency registry is unavailable. Please refresh and try again.")
+        st.stop()
     active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
     st.session_state.active_agency = active_record["agency_name"]
     st.session_state.active_toptier_code = active_record["toptier_code"]
@@ -1621,22 +1429,10 @@ def main() -> None:
         selected_agency = active_agency
 
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
-    trend_fiscal_years = tuple(int(year) for year in trend_df["fiscal_year"].sort_values().tolist())
-    dual_trend_df = fetch_dual_spend_trend(active_agency, selected_bureau, trend_fiscal_years)
-    latest_total_for_vendor = float(trend_df["amount"].iloc[-1]) if not trend_df.empty else 0
     vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
         active_agency,
         selected_bureau,
-        latest_total_for_vendor,
     )
-    transaction_df, transaction_payload, transaction_source, transaction_error = fetch_transactions(
-        active_agency,
-        selected_bureau,
-        int(selected_year),
-    )
-    negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
-    clawback_total = float(negative_transaction_df["Obligation Amount"].sum())
-    audit_df = audit_log_dataframe(transaction_df)
 
     with st.sidebar:
         st.divider()
@@ -1644,16 +1440,11 @@ def main() -> None:
         if selected_bureau != ALL_BUREAUS:
             st.caption(f"Active bureau: {selected_bureau}")
 
+    macro_live = trend_source.startswith("Live") and vendor_source.startswith("Live")
     source_label = (
-        "Live USAspending.gov"
-        if trend_source.startswith("Live")
-        and vendor_source.startswith("Live")
-        and transaction_source.startswith("Live")
-        else (
-            "Live spend data, transaction audit unavailable"
-            if trend_source.startswith("Live") and vendor_source.startswith("Live")
-            else "Realistic fallback data active"
-        )
+        "Live USAspending.gov award endpoints"
+        if macro_live
+        else "USAspending.gov macro endpoint issue"
     )
 
     safe_agency = html.escape(selected_agency)
@@ -1669,56 +1460,80 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     source_chip(source_label)
+    if trend_error:
+        st.error(f"Historical trends API issue: {trend_error}")
+    if vendor_error:
+        st.error(f"Vendor rankings API issue: {vendor_error}")
 
     current_total, previous_total = current_and_previous(trend_df, int(selected_year))
     yoy_delta = None
     if previous_total and previous_total > 0:
         yoy_delta = ((current_total - previous_total) / previous_total) * 100
+    total_spend_value = "Unavailable" if trend_error else format_money(current_total)
+    yoy_delta_value = "Unavailable" if trend_error else format_delta(yoy_delta)
+    contractor_count_value = "Unavailable" if vendor_error else format_count(contractor_count)
 
-    metric_cols = st.columns(4)
+    metric_cols = st.columns(3)
     with metric_cols[0]:
         metric_card(
             "Selected FY Total Spend",
-            format_money(current_total),
+            total_spend_value,
             f"FY {selected_year} obligations",
             "#2dd4bf",
         )
     with metric_cols[1]:
         metric_card(
             "Year-over-Year Delta",
-            format_delta(yoy_delta),
+            yoy_delta_value,
             "Compared with prior fiscal year",
             "#f59e0b" if (yoy_delta or 0) >= 0 else "#fb7185",
         )
     with metric_cols[2]:
         metric_card(
             "Unique Contractor Count",
-            format_count(contractor_count),
+            contractor_count_value,
             "Recipient records from ranking endpoint",
             "#38bdf8",
-        )
-    with metric_cols[3]:
-        metric_card(
-            "Total Funds Clawed Back",
-            format_money(clawback_total),
-            "Negative transaction obligations",
-            CRIMSON,
-            value_color=CRIMSON if clawback_total < 0 else None,
         )
 
     st.write("")
     chart_cols = st.columns([1.15, 1])
     with chart_cols[0]:
         st.plotly_chart(
-            make_trend_chart(dual_trend_df, int(selected_year)),
+            make_trend_chart(trend_df, int(selected_year)),
             use_container_width=True,
             config={"responsive": True},
         )
     with chart_cols[1]:
-        st.plotly_chart(
-            make_vendor_chart(vendor_df),
-            use_container_width=True,
-            config={"responsive": True},
+        if vendor_df.empty:
+            st.error("Top Contractor Leaderboard unavailable from USAspending.gov.")
+        else:
+            st.plotly_chart(
+                make_vendor_chart(vendor_df),
+                use_container_width=True,
+                config={"responsive": True},
+            )
+
+    transaction_df, transaction_payload, _transaction_source, transaction_error = fetch_transactions(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+    )
+    if transaction_error:
+        st.error(f"Transaction registry API issue: {transaction_error}")
+    negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
+    clawback_total = float(negative_transaction_df["Obligation Amount"].sum())
+    audit_df = audit_log_dataframe(transaction_df)
+
+    st.write("")
+    risk_metric_col, _risk_space = st.columns([1, 2])
+    with risk_metric_col:
+        metric_card(
+            "Total Funds Clawed Back",
+            format_money(clawback_total),
+            "Negative transaction obligations",
+            CRIMSON,
+            value_color=CRIMSON if clawback_total < 0 else None,
         )
 
     st.plotly_chart(
@@ -1735,10 +1550,10 @@ def main() -> None:
         st.markdown("Transaction Reductions & Cancellations")
         st.json(transaction_payload)
         if trend_error or vendor_error or transaction_error:
-            st.caption("Fallback reason captured without surfacing raw service errors.")
+            st.caption("Live API issues are surfaced above; no synthetic data is used.")
 
     st.markdown(
-        '<div class="audit-heading">⚠️ Formal Contract Cancellations Audit Log</div>',
+        '<div class="audit-heading">&#9888;&#65039; Formal Contract Cancellations Audit Log</div>',
         unsafe_allow_html=True,
     )
     if audit_df.empty:
