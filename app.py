@@ -1,3 +1,4 @@
+import calendar
 import hashlib
 import html
 import io
@@ -25,6 +26,7 @@ AGENCY_EXTRACTION_PROMPT = (
 DEFAULT_AGENCY_NAME = "Department of Defense"
 DEFAULT_TOPTIER_CODE = "097"
 CRIMSON = "#E11D48"
+SYNC_ICON = "\U0001F504"
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
@@ -32,16 +34,15 @@ TERMINATION_ACTION_MAP = {
 }
 TRANSACTION_FIELDS = [
     "Award ID",
-    "Recipient Name",
+    "Mod",
+    "Description",
+    "Award Amount",
     "Action Date",
-    "Transaction Amount",
+    "Recipient Name",
     "Awarding Agency",
     "Awarding Sub Agency",
-    "Award Type",
-    "Action Type",
-    "Action Type Description",
-    "Description",
 ]
+CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
 FALLBACK_AGENCY_RECORDS = [
     {"agency_name": DEFAULT_AGENCY_NAME, "toptier_code": DEFAULT_TOPTIER_CODE, "abbreviation": "DOD"},
     {"agency_name": "Department of the Interior", "toptier_code": "014", "abbreviation": "DOI"},
@@ -176,7 +177,7 @@ def fetch_subagencies(toptier_code: str, fiscal_year: int) -> list[str]:
     all_results = []
     page = 1
     try:
-        while page <= 100:
+        while True:
             response = requests.get(
                 f"{BASE_URL}/api/v2/agency/{toptier_code}/sub_agency/",
                 params={"fiscal_year": int(fiscal_year), "page": page},
@@ -677,23 +678,37 @@ def fiscal_year_date_range(fiscal_year: int) -> tuple[str, str]:
     return f"{int(fiscal_year) - 1}-10-01", f"{int(fiscal_year)}-09-30"
 
 
+def fiscal_year_month_ranges(fiscal_year: int) -> list[tuple[str, str]]:
+    ranges = []
+    year = int(fiscal_year) - 1
+    month = 10
+    for _index in range(12):
+        last_day = calendar.monthrange(year, month)[1]
+        ranges.append((f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day:02d}"))
+        month += 1
+        if month == 13:
+            month = 1
+            year += 1
+    return ranges
+
+
 def build_transaction_payload(
     agency_name: str,
     bureau_name: str | None,
-    fiscal_year: int,
+    start_date: str,
+    end_date: str,
     page: int = 1,
 ) -> dict:
-    start_date, end_date = fiscal_year_date_range(fiscal_year)
     return {
         "filters": {
             "agencies": agency_filter(agency_name, bureau_name),
             "award_type_codes": AWARD_TYPE_CODES,
-            "time_period": [{"start_date": start_date, "end_date": end_date}],
+            "date_range": {"start_date": start_date, "end_date": end_date},
         },
         "fields": TRANSACTION_FIELDS,
-        "limit": 100,
+        "limit": 1000,
         "page": page,
-        "sort": "Transaction Amount",
+        "sort": "Award Amount",
         "order": "asc",
     }
 
@@ -712,6 +727,40 @@ def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | N
         return None, f"{type(exc).__name__}: live USAspending request unavailable"
     except ValueError:
         return None, "Invalid JSON response from USAspending"
+
+
+def transaction_payload_time_period_fallback(payload: dict) -> dict:
+    fallback_payload = {
+        **payload,
+        "filters": dict(payload.get("filters") or {}),
+    }
+    date_range = fallback_payload["filters"].pop("date_range", None)
+    if date_range:
+        fallback_payload["filters"]["time_period"] = [
+            {
+                "start_date": date_range.get("start_date"),
+                "end_date": date_range.get("end_date"),
+            }
+        ]
+    return fallback_payload
+
+
+def post_transaction_payload(payload: dict) -> tuple[dict | None, str | None]:
+    data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+    if data:
+        return data, None
+
+    fallback_payload = transaction_payload_time_period_fallback(payload)
+    if fallback_payload != payload:
+        fallback_data, fallback_error = post_usaspending(
+            "/api/v2/search/spending_by_transaction/",
+            fallback_payload,
+        )
+        if fallback_data:
+            return fallback_data, None
+        return None, fallback_error or error
+
+    return None, error
 
 
 def parse_autocomplete_names(data: dict) -> list[str]:
@@ -861,6 +910,17 @@ def parse_action_type_code(value) -> str:
     return text[:1] if text else ""
 
 
+def classify_cancellation_description(description: str) -> str:
+    text = (description or "").upper()
+    if "DEFAULT" in text:
+        return "Default"
+    if "CONVENIENCE" in text:
+        return "Convenience"
+    if "CANCEL" in text or "TERMINATION" in text:
+        return "Cancellation"
+    return ""
+
+
 def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
     columns = [
         "Contractor Name",
@@ -878,6 +938,8 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
             first_present(
                 item,
                 [
+                    "Award Amount",
+                    "award_amount",
                     "Transaction Amount",
                     "transaction_amount",
                     "transaction_obligated_amount",
@@ -886,6 +948,19 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                     "amount",
                 ],
             )
+        )
+        description = (
+            first_present(
+                item,
+                [
+                    "Description",
+                    "description",
+                    "Award Description",
+                    "award_description",
+                    "transaction_description",
+                ],
+            )
+            or "No official transaction description provided"
         )
         action_code = parse_action_type_code(
             first_present(
@@ -920,18 +995,9 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                 or "Unspecified Bureau",
                 "Obligation Amount": amount,
                 "Action Code": action_code,
-                "Action Type": TERMINATION_ACTION_MAP.get(action_code, action_code or "Unspecified"),
-                "Description": first_present(
-                    item,
-                    [
-                        "Description",
-                        "description",
-                        "Award Description",
-                        "award_description",
-                        "transaction_description",
-                    ],
-                )
-                or "No official transaction description provided",
+                "Action Type": classify_cancellation_description(description)
+                or TERMINATION_ACTION_MAP.get(action_code, action_code or "Unspecified"),
+                "Description": description,
             }
         )
 
@@ -1016,39 +1082,62 @@ def fetch_transactions(
     bureau_name: str | None,
     fiscal_year: int,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
-    page = 1
-    all_rows = []
-    first_payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=1)
-    active_payload = first_payload
+    master_rows = []
+    monthly_ranges = fiscal_year_month_ranges(fiscal_year)
+    payload_log = {
+        "strategy": "monthly_date_slicing",
+        "fiscal_year": int(fiscal_year),
+        "fields": TRANSACTION_FIELDS,
+        "date_ranges": [{"start_date": start, "end_date": end} for start, end in monthly_ranges],
+        "filters": {
+            "agencies": agency_filter(agency_name, bureau_name),
+            "award_type_codes": AWARD_TYPE_CODES,
+        },
+    }
+    first_error = None
+    total_records = 0
+    progress_text = st.empty()
 
-    while True:
-        payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=page)
-        data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+    try:
+        for _month_index, (start_date, end_date) in enumerate(monthly_ranges, start=1):
+            progress_text.info(
+                f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+            )
+            page = 1
+            while True:
+                progress_text.info(
+                    f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+                )
+                payload = build_transaction_payload(
+                    agency_name,
+                    bureau_name,
+                    start_date,
+                    end_date,
+                    page=page,
+                )
+                data, error = post_transaction_payload(payload)
+                if not data:
+                    first_error = first_error or error
+                    break
 
-        if not data and page == 1:
-            fallback_payload = dict(payload)
-            fallback_payload.pop("fields", None)
-            data, error = post_usaspending("/api/v2/search/spending_by_transaction/", fallback_payload)
-            active_payload = fallback_payload
-        elif page == 1:
-            active_payload = payload
+                page_rows = data.get("results") or []
+                master_rows.extend(page_rows)
+                total_records += len(page_rows)
+                progress_text.info(
+                    f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
+                )
+                page_metadata = data.get("page_metadata") or {}
+                has_next = page_metadata.get("hasNext")
+                if isinstance(has_next, str):
+                    has_next = has_next.strip().lower() == "true"
+                if not has_next:
+                    break
+                page += 1
+    finally:
+        progress_text.empty()
 
-        if not data:
-            return normalize_transaction_response(all_rows), active_payload, "Unavailable", error
-
-        page_rows = data.get("results") or []
-        all_rows.extend(page_rows)
-
-        page_metadata = data.get("page_metadata") or {}
-        has_next = page_metadata.get("hasNext")
-        if isinstance(has_next, str):
-            has_next = has_next.strip().lower() == "true"
-        if not has_next:
-            break
-
-        page += 1
-
-    return normalize_transaction_response(all_rows), active_payload, "Live USAspending.gov", None
+    source = "Live USAspending.gov" if first_error is None else "Partial USAspending.gov"
+    return normalize_transaction_response(master_rows), payload_log, source, first_error
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1059,29 +1148,29 @@ def fetch_dual_spend_trend(
 ) -> pd.DataFrame:
     transaction_frames = []
     for fiscal_year in fiscal_years:
-        page = 1
         year_rows = []
-        while True:
-            payload = build_transaction_payload(agency_name, bureau_name, fiscal_year, page=page)
-            data, _error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
-            if not data and page == 1:
-                fallback_payload = dict(payload)
-                fallback_payload.pop("fields", None)
-                data, _error = post_usaspending(
-                    "/api/v2/search/spending_by_transaction/",
-                    fallback_payload,
+        for start_date, end_date in fiscal_year_month_ranges(fiscal_year):
+            page = 1
+            while True:
+                payload = build_transaction_payload(
+                    agency_name,
+                    bureau_name,
+                    start_date,
+                    end_date,
+                    page=page,
                 )
-            if not data:
-                break
+                data, _error = post_transaction_payload(payload)
+                if not data:
+                    break
 
-            year_rows.extend(data.get("results") or [])
-            page_metadata = data.get("page_metadata") or {}
-            has_next = page_metadata.get("hasNext")
-            if isinstance(has_next, str):
-                has_next = has_next.strip().lower() == "true"
-            if not has_next:
-                break
-            page += 1
+                year_rows.extend(data.get("results") or [])
+                page_metadata = data.get("page_metadata") or {}
+                has_next = page_metadata.get("hasNext")
+                if isinstance(has_next, str):
+                    has_next = has_next.strip().lower() == "true"
+                if not has_next:
+                    break
+                page += 1
 
         year_df = normalize_transaction_response(year_rows)
         if not year_df.empty:
@@ -1382,10 +1471,12 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
                 "Description",
             ]
         )
-    audit_df = transaction_df[transaction_df["Action Code"].isin(TERMINATION_ACTION_MAP.keys())].copy()
+    description_text = transaction_df["Description"].fillna("").astype(str).str.upper()
+    audit_mask = description_text.apply(lambda value: any(term in value for term in CANCELLATION_TERMS))
+    audit_df = transaction_df[audit_mask].copy()
     if audit_df.empty:
         return audit_df
-    audit_df["Action Type"] = audit_df["Action Code"].map(TERMINATION_ACTION_MAP)
+    audit_df["Action Type"] = audit_df["Description"].apply(classify_cancellation_description)
     audit_df["Obligation Amount"] = audit_df["Obligation Amount"].apply(format_money)
     return audit_df[
         [
@@ -1507,9 +1598,11 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             st.write("")
-            render_market_selectors(agency_records)
-            st.write("")
-            if st.button("Generate Market Intelligence", use_container_width=True):
+            with st.form("search_form"):
+                render_market_selectors(agency_records)
+                st.write("")
+                submitted = st.form_submit_button("Run Data Analysis", use_container_width=True)
+            if submitted:
                 st.session_state.searched = True
                 st.rerun()
         return
