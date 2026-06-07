@@ -76,6 +76,10 @@ st.set_page_config(
 )
 
 
+if "analysis_active" not in st.session_state:
+    st.session_state.analysis_active = False
+
+
 def request_headers() -> dict:
     return {
         "Accept": "application/json",
@@ -1660,29 +1664,45 @@ def main() -> None:
     st.session_state.active_agency = active_record["agency_name"]
     st.session_state.active_toptier_code = active_record["toptier_code"]
 
-    hide_sidebar_for_landing()
-    st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
-    _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
-    with center_col:
+    with st.sidebar:
         st.markdown(
             """
-            <div class="landing-panel">
-                <h1 class="landing-title">Federal Spending Analysis Portal</h1>
-                <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
-            </div>
+            <div class="sidebar-title">Control Panel</div>
+            <div class="sidebar-subtitle">Choose an agency, then narrow the dashboard with its linked bureau and fiscal-year filters.</div>
             """,
             unsafe_allow_html=True,
         )
-        st.write("")
+        st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
         active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
             agency_records
         )
-        st.write("")
-        run_analysis = False
-        if st.button("Run Data Analysis", type="primary", use_container_width=True):
-            run_analysis = True
+        st.divider()
+        st.caption(f"Active agency: {active_agency}")
+        if selected_bureau != ALL_BUREAUS:
+            st.caption(f"Active bureau: {selected_bureau}")
 
-    if run_analysis:
+    if not st.session_state.analysis_active:
+        st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
+        _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
+        with center_col:
+            st.markdown(
+                """
+                <div class="landing-panel">
+                    <h1 class="landing-title">Federal Spending Analysis Portal</h1>
+                    <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.write("")
+            if st.button("Run Data Analysis", type="primary", use_container_width=True):
+                st.session_state.analysis_active = True
+                st.rerun()
+
+    if st.session_state.analysis_active:
+        if st.button("🔙 Back to Configurations", type="primary"):
+            st.session_state.analysis_active = False
+            st.rerun()
         st.write("")
         render_analysis_dashboard(active_agency, selected_bureau, selected_year)
 
