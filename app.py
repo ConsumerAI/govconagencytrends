@@ -39,12 +39,13 @@ TERMINATION_ACTION_MAP = {
 }
 TRANSACTION_FIELDS = [
     "Award ID",
-    "Mod",
+    "Modification Number",
     "Description",
-    "Award Amount",
+    "Federal Action Obligation",
     "Action Date",
     "Recipient Name",
     "Action Type",
+    "Awarding Sub Agency",
 ]
 CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
 AGENCY_ALIASES = {
@@ -825,6 +826,7 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
     columns = [
         "Contractor Name",
         "Subagency / Bureau",
+        "Modification Number",
         "Obligation Amount",
         "Action Code",
         "Action Type",
@@ -838,12 +840,13 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
             first_present(
                 item,
                 [
+                    "Federal Action Obligation",
+                    "federal_action_obligation",
                     "Award Amount",
                     "award_amount",
                     "Transaction Amount",
                     "transaction_amount",
                     "transaction_obligated_amount",
-                    "federal_action_obligation",
                     "obligation",
                     "amount",
                 ],
@@ -893,6 +896,16 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                     ],
                 )
                 or "Unspecified Bureau",
+                "Modification Number": first_present(
+                    item,
+                    [
+                        "Modification Number",
+                        "modification_number",
+                        "Mod",
+                        "mod",
+                    ],
+                )
+                or "",
                 "Obligation Amount": amount,
                 "Action Code": action_code,
                 "Action Type": classify_cancellation_description(description)
@@ -1351,6 +1364,7 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
             columns=[
                 "Contractor Name",
                 "Subagency / Bureau",
+                "Modification Number",
                 "Obligation Amount",
                 "Action Type",
                 "Description",
@@ -1374,6 +1388,7 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
         [
             "Contractor Name",
             "Subagency / Bureau",
+            "Modification Number",
             "Obligation Amount",
             "Action Type",
             "Description",
