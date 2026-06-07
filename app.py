@@ -31,7 +31,7 @@ DEFAULT_AGENCY_RECORD = {
 }
 CRIMSON = "#E11D48"
 SYNC_ICON = "\U0001F504"
-MAX_TRANSACTION_PAGES = 30
+MAX_TRANSACTION_PAGES = 50
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
@@ -636,7 +636,7 @@ def build_transaction_payload(
             "time_period": [{"start_date": start_date, "end_date": end_date}],
         },
         "fields": TRANSACTION_FIELDS,
-        "limit": 1000,
+        "limit": 100,
         "page": page,
         "sort": "Action Date",
         "order": "desc",
