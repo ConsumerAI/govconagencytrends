@@ -76,10 +76,6 @@ st.set_page_config(
 )
 
 
-if "analysis_active" not in st.session_state:
-    st.session_state.analysis_active = False
-
-
 def request_headers() -> dict:
     return {
         "Accept": "application/json",
@@ -1301,26 +1297,38 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
 def make_vendor_chart(df: pd.DataFrame) -> go.Figure:
     chart_df = df.sort_values("amount", ascending=True).copy()
     chart_df["display_amount"] = chart_df["amount"].apply(format_money)
-    tickvals, ticktext = money_ticks(chart_df["amount"].max())
+    max_value = float(chart_df["amount"].max() or 0) if not chart_df.empty else 0
+    tickvals, ticktext = money_ticks(max_value)
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=chart_df["amount"],
-            y=chart_df["recipient"],
-            customdata=chart_df["display_amount"],
-            orientation="h",
-            marker=dict(
-                color=chart_df["amount"],
-                colorscale=[
-                    [0, "#38bdf8"],
-                    [0.55, "#2dd4bf"],
-                    [1, "#f59e0b"],
-                ],
-                line=dict(color="rgba(255,255,255,0.14)", width=1),
-            ),
-            hovertemplate="<b>%{y}</b><br>Funding: %{customdata}<extra></extra>",
+    if chart_df.empty:
+        fig.add_annotation(
+            text="Contractor leaderboard awaiting analysis",
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color="#dce5ef", size=14),
         )
-    )
+    else:
+        fig.add_trace(
+            go.Bar(
+                x=chart_df["amount"],
+                y=chart_df["recipient"],
+                customdata=chart_df["display_amount"],
+                orientation="h",
+                marker=dict(
+                    color=chart_df["amount"],
+                    colorscale=[
+                        [0, "#38bdf8"],
+                        [0.55, "#2dd4bf"],
+                        [1, "#f59e0b"],
+                    ],
+                    line=dict(color="rgba(255,255,255,0.14)", width=1),
+                ),
+                hovertemplate="<b>%{y}</b><br>Funding: %{customdata}<extra></extra>",
+            )
+        )
     fig.update_layout(
         title=dict(text="Top Contractor Leaderboard", font=dict(size=18, color="#f4f7fb")),
         height=430,
@@ -1509,12 +1517,22 @@ def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, 
     return active_agency, selected_bureau, int(selected_year), active_toptier_code
 
 
-def render_analysis_dashboard(active_agency: str, selected_bureau: str | None, selected_year: int) -> None:
+def render_analysis_dashboard(
+    active_agency: str,
+    selected_bureau: str | None,
+    selected_year: int,
+) -> None:
     selected_agency = active_agency
+
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
     vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
         active_agency,
         selected_bureau,
+    )
+    transaction_df, transaction_payload, _transaction_source, transaction_error = fetch_transactions(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
     )
 
     macro_live = trend_source.startswith("Live") and vendor_source.startswith("Live")
@@ -1591,11 +1609,6 @@ def render_analysis_dashboard(active_agency: str, selected_bureau: str | None, s
                 config={"responsive": True},
             )
 
-    transaction_df, transaction_payload, _transaction_source, transaction_error = fetch_transactions(
-        active_agency,
-        selected_bureau,
-        int(selected_year),
-    )
     if transaction_error:
         st.error(f"Transaction registry API issue: {transaction_error}")
     negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
@@ -1676,34 +1689,14 @@ def main() -> None:
         active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
             agency_records
         )
+        st.write("")
+        analysis_triggered = st.button("Run Data Analysis", type="primary", use_container_width=True)
         st.divider()
         st.caption(f"Active agency: {active_agency}")
         if selected_bureau != ALL_BUREAUS:
             st.caption(f"Active bureau: {selected_bureau}")
 
-    if not st.session_state.analysis_active:
-        st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
-        _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
-        with center_col:
-            st.markdown(
-                """
-                <div class="landing-panel">
-                    <h1 class="landing-title">Federal Spending Analysis Portal</h1>
-                    <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            if st.button("Run Data Analysis", type="primary", use_container_width=True):
-                st.session_state.analysis_active = True
-                st.rerun()
-
-    if st.session_state.analysis_active:
-        if st.button("🔙 Back to Configurations", type="primary"):
-            st.session_state.analysis_active = False
-            st.rerun()
-        st.write("")
+    if analysis_triggered:
         render_analysis_dashboard(active_agency, selected_bureau, selected_year)
 
 
