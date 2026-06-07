@@ -39,13 +39,12 @@ TERMINATION_ACTION_MAP = {
 }
 TRANSACTION_FIELDS = [
     "Award ID",
-    "Modification Number",
+    "Mod",
     "Description",
-    "Federal Action Obligation",
+    "Transaction Amount",
     "Action Date",
     "Recipient Name",
     "Action Type",
-    "Awarding Sub Agency",
 ]
 CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
 AGENCY_ALIASES = {
@@ -655,9 +654,13 @@ def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | N
     except requests.exceptions.HTTPError as e:
         if endpoint == "/api/v2/search/spending_by_transaction/":
             print("--- USASPENDING API DIAGNOSTIC LOG ---")
-            print(e.response.text)
-        error_detail = e.response.text if e.response else str(e)
-        return None, f"HTTPError Details: {error_detail}"
+            if e.response:
+                print(e.response.text)
+        try:
+            error_msg = e.response.json()
+        except Exception:
+            error_msg = e.response.text if e.response else str(e)
+        return None, f"API Validation Breakdown: {error_msg}"
     except requests.RequestException as exc:
         return None, f"{type(exc).__name__}: live USAspending request unavailable"
     except ValueError:
@@ -826,7 +829,7 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
     columns = [
         "Contractor Name",
         "Subagency / Bureau",
-        "Modification Number",
+        "Mod",
         "Obligation Amount",
         "Action Code",
         "Action Type",
@@ -840,13 +843,13 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
             first_present(
                 item,
                 [
+                    "Transaction Amount",
+                    "transaction_amount",
+                    "transaction_obligated_amount",
                     "Federal Action Obligation",
                     "federal_action_obligation",
                     "Award Amount",
                     "award_amount",
-                    "Transaction Amount",
-                    "transaction_amount",
-                    "transaction_obligated_amount",
                     "obligation",
                     "amount",
                 ],
@@ -896,13 +899,13 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                     ],
                 )
                 or "Unspecified Bureau",
-                "Modification Number": first_present(
+                "Mod": first_present(
                     item,
                     [
-                        "Modification Number",
-                        "modification_number",
                         "Mod",
                         "mod",
+                        "Modification Number",
+                        "modification_number",
                     ],
                 )
                 or "",
@@ -1364,7 +1367,7 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
             columns=[
                 "Contractor Name",
                 "Subagency / Bureau",
-                "Modification Number",
+                "Mod",
                 "Obligation Amount",
                 "Action Type",
                 "Description",
@@ -1388,7 +1391,7 @@ def audit_log_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
         [
             "Contractor Name",
             "Subagency / Bureau",
-            "Modification Number",
+            "Mod",
             "Obligation Amount",
             "Action Type",
             "Description",
