@@ -638,6 +638,8 @@ def build_transaction_payload(
         "fields": TRANSACTION_FIELDS,
         "limit": 1000,
         "page": page,
+        "sort": "Action Date",
+        "order": "desc",
     }
 
 
