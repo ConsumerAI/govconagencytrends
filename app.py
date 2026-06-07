@@ -1517,13 +1517,26 @@ def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, 
     return active_agency, selected_bureau, int(selected_year), active_toptier_code
 
 
+def render_dashboard_header(active_agency: str, selected_bureau: str | None) -> None:
+    safe_agency = html.escape(active_agency)
+    safe_bureau = "" if selected_bureau == ALL_BUREAUS else f" / {html.escape(selected_bureau)}"
+    agency_header = f"{safe_agency}{safe_bureau}"
+    st.markdown(
+        f"""
+        <section class="hero">
+            <h1>{agency_header}</h1>
+            <p class="brand-subtitle">GovCon Pulse: Federal Spending Intelligence Hub</p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_analysis_dashboard(
     active_agency: str,
     selected_bureau: str | None,
     selected_year: int,
 ) -> None:
-    selected_agency = active_agency
-
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
     vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
         active_agency,
@@ -1542,18 +1555,6 @@ def render_analysis_dashboard(
         else "USAspending.gov macro endpoint issue"
     )
 
-    safe_agency = html.escape(selected_agency)
-    safe_bureau = "" if selected_bureau == ALL_BUREAUS else f" / {html.escape(selected_bureau)}"
-    agency_header = f"{safe_agency}{safe_bureau}"
-    st.markdown(
-        f"""
-        <section class="hero">
-            <h1>{agency_header}</h1>
-            <p class="brand-subtitle">GovCon Pulse: Federal Spending Intelligence Hub</p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
     source_chip(source_label)
     if trend_error:
         st.error(f"Historical trends API issue: {trend_error}")
@@ -1695,6 +1696,8 @@ def main() -> None:
         st.caption(f"Active agency: {active_agency}")
         if selected_bureau != ALL_BUREAUS:
             st.caption(f"Active bureau: {selected_bureau}")
+
+    render_dashboard_header(active_agency, selected_bureau)
 
     if analysis_triggered:
         render_analysis_dashboard(active_agency, selected_bureau, selected_year)
