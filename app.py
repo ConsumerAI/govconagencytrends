@@ -40,7 +40,7 @@ TERMINATION_ACTION_MAP = {
 TRANSACTION_FIELDS = [
     "Award ID",
     "Mod",
-    "Description",
+    "Transaction Description",
     "Transaction Amount",
     "Action Date",
     "Recipient Name",
@@ -861,11 +861,12 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
             first_present(
                 item,
                 [
+                    "Transaction Description",
+                    "transaction_description",
                     "Description",
                     "description",
                     "Award Description",
                     "award_description",
-                    "transaction_description",
                 ],
             )
             or "No official transaction description provided"
