@@ -1661,6 +1661,7 @@ def render_analysis_dashboard(
 def main() -> None:
     inject_styles()
 
+    # 1. Initialize core tracking session states
     if "active_agency" not in st.session_state:
         st.session_state.active_agency = DEFAULT_AGENCY_NAME
     if "active_toptier_code" not in st.session_state:
@@ -1669,7 +1670,11 @@ def main() -> None:
         st.session_state.active_bureau = ALL_BUREAUS
     if "active_fiscal_year" not in st.session_state:
         st.session_state.active_fiscal_year = complete_fiscal_year()
+        
+    if "current_analysis" not in st.session_state:
+        st.session_state.current_analysis = None
 
+    # 2. Fetch registry and sync active states
     agency_records = fetch_toptier_agencies()
     if not agency_records:
         st.error("USAspending agency registry is unavailable. Please refresh and try again.")
@@ -1678,6 +1683,7 @@ def main() -> None:
     st.session_state.active_agency = active_record["agency_name"]
     st.session_state.active_toptier_code = active_record["toptier_code"]
 
+    # 3. Render the Sidebar Control Panel
     with st.sidebar:
         st.markdown(
             """
@@ -1697,10 +1703,34 @@ def main() -> None:
         if selected_bureau != ALL_BUREAUS:
             st.caption(f"Active bureau: {selected_bureau}")
 
-    render_dashboard_header(active_agency, selected_bureau)
-
+    # 4. Handle Button Click Execution
     if analysis_triggered:
-        render_analysis_dashboard(active_agency, selected_bureau, selected_year)
+        st.session_state.current_analysis = {
+            "agency": active_agency,
+            "bureau": selected_bureau,
+            "year": selected_year
+        }
+
+    # 5. Reset Check: If dropdown parameters change, automatically clear the dashboard view
+    if st.session_state.current_analysis:
+        if (st.session_state.current_analysis["agency"] != active_agency or
+            st.session_state.current_analysis["bureau"] != selected_bureau or
+            st.session_state.current_analysis["year"] != selected_year):
+            st.session_state.current_analysis = None
+
+    # 6. Render Layout Conditional Separation
+    if st.session_state.current_analysis:
+        # Show dashboard with analyzed data values
+        render_dashboard_header(st.session_state.current_analysis["agency"], st.session_state.current_analysis["bureau"])
+        render_analysis_dashboard(
+            st.session_state.current_analysis["agency"],
+            st.session_state.current_analysis["bureau"],
+            st.session_state.current_analysis["year"]
+        )
+    else:
+        # Show clean initial landing view with headers and a simple instruction prompt
+        render_dashboard_header(active_agency, selected_bureau)
+        st.info("👈 Select your parameters in the Control Panel and click 'Run Data Analysis' to stream federal registries.")
 
 
 if __name__ == "__main__":
