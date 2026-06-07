@@ -22,12 +22,12 @@ AGENCY_EXTRACTION_PROMPT = (
     "Extract the exact formal federal Awarding Agency from this text. "
     "Return strictly as valid JSON: {'agency': '...'}. If unknown, return null."
 )
-DEFAULT_AGENCY_NAME = "Department of Defense"
-DEFAULT_TOPTIER_CODE = "097"
+DEFAULT_AGENCY_NAME = "National Aeronautics and Space Administration"
+DEFAULT_TOPTIER_CODE = "080"
 DEFAULT_AGENCY_RECORD = {
     "agency_name": DEFAULT_AGENCY_NAME,
     "toptier_code": DEFAULT_TOPTIER_CODE,
-    "abbreviation": "DOD",
+    "abbreviation": "NASA",
 }
 CRIMSON = "#E11D48"
 SYNC_ICON = "\U0001F504"
@@ -587,10 +587,18 @@ def get_openai_api_key() -> str | None:
 
 
 def agency_filter(agency_name: str, bureau_name: str | None = None) -> list[dict]:
+    toptier_name = normalize_agency_name(agency_name)
     bureau_filter_name = resolve_bureau_filter_name(bureau_name)
     if bureau_filter_name:
-        return [{"type": "awarding", "tier": "subtier", "name": bureau_filter_name}]
-    return [{"type": "awarding", "tier": "toptier", "name": normalize_agency_name(agency_name)}]
+        return [
+            {
+                "type": "awarding",
+                "tier": "subtier",
+                "name": bureau_filter_name,
+                "toptier_name": toptier_name,
+            }
+        ]
+    return [{"type": "awarding", "tier": "toptier", "name": toptier_name}]
 
 
 def build_trends_payload(agency_name: str, bureau_name: str | None = None) -> dict:
@@ -633,6 +641,7 @@ def build_transaction_payload(
             "agencies": agency_filter(agency_name, bureau_name),
             "award_type_codes": AWARD_TYPE_CODES,
             "time_period": [{"start_date": start_date, "end_date": end_date}],
+            "award_amounts": [{"upper_bound": -0.01}],
         },
         "fields": TRANSACTION_FIELDS,
         "limit": 100,
@@ -1496,76 +1505,13 @@ def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, 
     return active_agency, selected_bureau, int(selected_year), active_toptier_code
 
 
-def main() -> None:
-    inject_styles()
-
-    if "active_agency" not in st.session_state:
-        st.session_state.active_agency = DEFAULT_AGENCY_NAME
-    if "active_toptier_code" not in st.session_state:
-        st.session_state.active_toptier_code = DEFAULT_TOPTIER_CODE
-    if "active_bureau" not in st.session_state:
-        st.session_state.active_bureau = ALL_BUREAUS
-    if "active_fiscal_year" not in st.session_state:
-        st.session_state.active_fiscal_year = complete_fiscal_year()
-    if "searched" not in st.session_state:
-        st.session_state.searched = False
-
-    agency_records = fetch_toptier_agencies()
-    if not agency_records:
-        st.error("USAspending agency registry is unavailable. Please refresh and try again.")
-        st.stop()
-    active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
-    st.session_state.active_agency = active_record["agency_name"]
-    st.session_state.active_toptier_code = active_record["toptier_code"]
-
-    if not st.session_state.searched:
-        hide_sidebar_for_landing()
-        st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
-        _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
-        with center_col:
-            st.markdown(
-                """
-                <div class="landing-panel">
-                    <h1 class="landing-title">Federal Spending Analysis Portal</h1>
-                    <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            st.write("")
-            render_market_selectors(agency_records)
-            st.write("")
-            if st.button("Run Data Analysis", use_container_width=True):
-                st.session_state.searched = True
-                st.rerun()
-        return
-
-    with st.sidebar:
-        st.markdown(
-            """
-            <div class="sidebar-title">Control Panel</div>
-            <div class="sidebar-subtitle">Choose an agency, then narrow the dashboard with its linked bureau and fiscal-year filters.</div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
-        active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
-            agency_records
-        )
-        selected_agency = active_agency
-
+def render_analysis_dashboard(active_agency: str, selected_bureau: str | None, selected_year: int) -> None:
+    selected_agency = active_agency
     trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
     vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
         active_agency,
         selected_bureau,
     )
-
-    with st.sidebar:
-        st.divider()
-        st.caption(f"Active agency: {selected_agency}")
-        if selected_bureau != ALL_BUREAUS:
-            st.caption(f"Active bureau: {selected_bureau}")
 
     macro_live = trend_source.startswith("Live") and vendor_source.startswith("Live")
     source_label = (
@@ -1692,6 +1638,53 @@ def main() -> None:
             **{"color": "#1A1A1A", "background-color": "#FFFFFF"}
         )
         st.dataframe(styled_audit_df, use_container_width=True, hide_index=True)
+
+
+def main() -> None:
+    inject_styles()
+
+    if "active_agency" not in st.session_state:
+        st.session_state.active_agency = DEFAULT_AGENCY_NAME
+    if "active_toptier_code" not in st.session_state:
+        st.session_state.active_toptier_code = DEFAULT_TOPTIER_CODE
+    if "active_bureau" not in st.session_state:
+        st.session_state.active_bureau = ALL_BUREAUS
+    if "active_fiscal_year" not in st.session_state:
+        st.session_state.active_fiscal_year = complete_fiscal_year()
+
+    agency_records = fetch_toptier_agencies()
+    if not agency_records:
+        st.error("USAspending agency registry is unavailable. Please refresh and try again.")
+        st.stop()
+    active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
+    st.session_state.active_agency = active_record["agency_name"]
+    st.session_state.active_toptier_code = active_record["toptier_code"]
+
+    hide_sidebar_for_landing()
+    st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
+    _left_col, center_col, _right_col = st.columns([1, 1.15, 1])
+    with center_col:
+        st.markdown(
+            """
+            <div class="landing-panel">
+                <h1 class="landing-title">Federal Spending Analysis Portal</h1>
+                <p class="landing-subtitle">Configure an agency, bureau, and fiscal year to generate live market intelligence from USAspending.gov.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.write("")
+        active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
+            agency_records
+        )
+        st.write("")
+        run_analysis = False
+        if st.button("Run Data Analysis", type="primary", use_container_width=True):
+            run_analysis = True
+
+    if run_analysis:
+        st.write("")
+        render_analysis_dashboard(active_agency, selected_bureau, selected_year)
 
 
 if __name__ == "__main__":
