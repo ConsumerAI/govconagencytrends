@@ -31,7 +31,6 @@ DEFAULT_AGENCY_RECORD = {
 }
 CRIMSON = "#E11D48"
 SYNC_ICON = "\U0001F504"
-MAX_TRANSACTION_PAGES = 50
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
@@ -807,6 +806,25 @@ def parse_currency_amount(value) -> float:
         return 0.0
 
 
+def transaction_amount(item: dict) -> float:
+    return parse_currency_amount(
+        first_present(
+            item,
+            [
+                "Transaction Amount",
+                "transaction_amount",
+                "transaction_obligated_amount",
+                "Federal Action Obligation",
+                "federal_action_obligation",
+                "Award Amount",
+                "award_amount",
+                "obligation",
+                "amount",
+            ],
+        )
+    )
+
+
 def parse_action_type_code(value) -> str:
     if value is None:
         return ""
@@ -841,22 +859,7 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
     for item in rows:
         if not isinstance(item, dict):
             continue
-        amount = parse_currency_amount(
-            first_present(
-                item,
-                [
-                    "Transaction Amount",
-                    "transaction_amount",
-                    "transaction_obligated_amount",
-                    "Federal Action Obligation",
-                    "federal_action_obligation",
-                    "Award Amount",
-                    "award_amount",
-                    "obligation",
-                    "amount",
-                ],
-            )
-        )
+        amount = transaction_amount(item)
         description = (
             first_present(
                 item,
@@ -951,6 +954,19 @@ def dataframe_has_spend(df: pd.DataFrame, amount_column: str) -> bool:
     return bool(numeric_amounts.abs().sum() > 0)
 
 
+@st.cache_data(ttl=2592000)
+def fetch_transaction_page(
+    agency_name: str,
+    bureau_name: str | None,
+    start_date: str,
+    end_date: str,
+    page: int,
+) -> tuple[dict | None, str | None, dict]:
+    payload = build_transaction_payload(agency_name, bureau_name, start_date, end_date, page=page)
+    data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+    return data, error, payload
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_trends(agency_name: str, bureau_name: str | None) -> tuple[pd.DataFrame, dict, str, str | None]:
     payload = build_trends_payload(agency_name, bureau_name)
@@ -1025,28 +1041,27 @@ def fetch_transaction_pages(
     start_date: str,
     end_date: str,
     progress_text,
-) -> tuple[list[dict], dict, str | None]:
-    max_pages = MAX_TRANSACTION_PAGES
+) -> tuple[list[dict], dict, str | None, int, float]:
     master_rows = []
     payload_log = build_transaction_payload(agency_name, bureau_name, start_date, end_date, page=1)
     first_error = None
     total_records = 0
+    total_obligation_magnitude = 0.0
     seen_page_signatures = set()
 
     page = 1
     has_next = True
-    while has_next and page <= max_pages:
+    while has_next:
         progress_text.info(
             f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
         )
-        payload = build_transaction_payload(
+        data, error, payload = fetch_transaction_page(
             agency_name,
             bureau_name,
             start_date,
             end_date,
             page=page,
         )
-        data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
         if not data:
             first_error = first_error or error or f"Transaction page {page} returned no data"
             break
@@ -1061,7 +1076,8 @@ def fetch_transaction_pages(
             break
         seen_page_signatures.add(signature)
 
-        master_rows.extend(page_rows)
+        total_obligation_magnitude += sum(abs(transaction_amount(row)) for row in page_rows)
+        master_rows.extend(row for row in page_rows if transaction_amount(row) < 0)
         total_records += len(page_rows)
         progress_text.info(
             f"{SYNC_ICON} Synchronizing Live Federal Registry... Compiled {total_records:,} transactions so far."
@@ -1069,10 +1085,7 @@ def fetch_transaction_pages(
         has_next = response_has_next(data.get("page_metadata") or {})
         page += 1
 
-    if has_next and page > max_pages:
-        first_error = first_error or f"Transaction pagination stopped at the {max_pages:,}-page safety cap"
-
-    return master_rows, payload_log, first_error
+    return master_rows, payload_log, first_error, total_records, total_obligation_magnitude
 
 
 def fetch_transactions(
@@ -1084,7 +1097,7 @@ def fetch_transactions(
     progress_text = st.empty()
 
     try:
-        master_rows, payload_log, first_error = fetch_transaction_pages(
+        master_rows, payload_log, first_error, records_seen, obligation_magnitude = fetch_transaction_pages(
             agency_name,
             bureau_name,
             start_date,
@@ -1093,8 +1106,14 @@ def fetch_transactions(
         )
         transaction_df = normalize_transaction_response(master_rows)
 
-        if bureau_filter_active(bureau_name) and not dataframe_has_spend(transaction_df, "Obligation Amount"):
-            fallback_rows, fallback_payload, fallback_error = fetch_transaction_pages(
+        if bureau_filter_active(bureau_name) and (records_seen == 0 or obligation_magnitude == 0):
+            (
+                fallback_rows,
+                fallback_payload,
+                fallback_error,
+                fallback_records_seen,
+                fallback_obligation_magnitude,
+            ) = fetch_transaction_pages(
                 agency_name,
                 None,
                 start_date,
@@ -1102,7 +1121,7 @@ def fetch_transactions(
                 progress_text,
             )
             fallback_df = normalize_transaction_response(fallback_rows)
-            if dataframe_has_spend(fallback_df, "Obligation Amount"):
+            if fallback_records_seen > 0 and fallback_obligation_magnitude > 0:
                 fallback_source = "Live USAspending.gov (top-tier fallback)" if fallback_error is None else "Partial USAspending.gov (top-tier fallback)"
                 return fallback_df, fallback_payload, fallback_source, fallback_error
             return (
