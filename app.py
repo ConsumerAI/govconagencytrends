@@ -1464,6 +1464,42 @@ def hide_sidebar_for_landing() -> None:
     )
 
 
+def mark_analysis_started(active_agency: str, selected_bureau: str, selected_year: int) -> None:
+    st.session_state.dashboard_started = True
+    st.session_state.analyzed_agency = active_agency
+    st.session_state.analyzed_bureau = selected_bureau
+    st.session_state.analyzed_year = int(selected_year)
+
+
+def render_landing_page(agency_records: list[dict]) -> None:
+    hide_sidebar_for_landing()
+
+    st.markdown('<div class="landing-control-spacer"></div>', unsafe_allow_html=True)
+    _left, center, _right = st.columns([1, 1.25, 1])
+
+    with center:
+        st.markdown(
+            """
+            <div class="landing-title">Control Panel</div>
+            <div class="landing-subtitle">Choose an agency, then narrow the dashboard with its linked bureau and fiscal-year filters.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
+        active_agency, selected_bureau, selected_year, _active_toptier_code = render_market_selectors(
+            agency_records
+        )
+        st.write("")
+        if st.button("Run Data Analysis", type="primary", use_container_width=True):
+            mark_analysis_started(active_agency, selected_bureau, selected_year)
+            st.rerun()
+
+        st.divider()
+        st.caption(f"Active agency: {active_agency}")
+        if selected_bureau != ALL_BUREAUS:
+            st.caption(f"Active bureau: {selected_bureau}")
+
+
 def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str]:
     agency_options = agency_names_from_records(agency_records)
     if not agency_options:
@@ -1678,6 +1714,8 @@ def main() -> None:
         st.session_state.analyzed_bureau = None
     if "analyzed_year" not in st.session_state:
         st.session_state.analyzed_year = None
+    if "dashboard_started" not in st.session_state:
+        st.session_state.dashboard_started = False
 
     agency_records = fetch_toptier_agencies()
     if not agency_records:
@@ -1686,6 +1724,10 @@ def main() -> None:
     active_record = agency_record_by_name(agency_records, st.session_state.active_agency)
     st.session_state.active_agency = active_record["agency_name"]
     st.session_state.active_toptier_code = active_record["toptier_code"]
+
+    if not st.session_state.dashboard_started:
+        render_landing_page(agency_records)
+        return
 
     # Render Sidebar Control Panel
     with st.sidebar:
@@ -1712,9 +1754,7 @@ def main() -> None:
 
     # Lock in parameters when the button is clicked
     if analysis_triggered:
-        st.session_state.analyzed_agency = active_agency
-        st.session_state.analyzed_bureau = selected_bureau
-        st.session_state.analyzed_year = selected_year
+        mark_analysis_started(active_agency, selected_bureau, selected_year)
 
     # Only show results if current sidebar selections match what was explicitly analyzed
     if (st.session_state.analyzed_agency == active_agency and 
