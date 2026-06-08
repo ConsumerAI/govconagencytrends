@@ -34,12 +34,41 @@ CRIMSON = "#E11D48"
 SYNC_ICON = "\U0001F504"
 ALL_CONTRACTING_OFFICES = "All Contracting Offices"
 CONTRACTING_OFFICE_SEPARATOR = "||"
+ALL_NAICS_CODES = "All NAICS Codes"
+ALL_CONTRACT_TYPES = "All Contract Types"
+ALL_PRODUCT_SERVICE_CODES = "All Product / Service Codes"
+ALL_SET_ASIDE_TYPES = "All Set-Aside Types"
+ALL_POP_STATES = "All Place of Performance States"
+OPTION_SEPARATOR = "||"
+CONTRACT_TYPE_OPTIONS = {
+    "J": "FIRM FIXED PRICE",
+    "U": "COST PLUS FIXED FEE",
+    "S": "COST NO FEE",
+    "R": "COST PLUS AWARD FEE",
+    "Y": "TIME AND MATERIALS",
+    "K": "FIXED PRICE WITH ECONOMIC PRICE ADJUSTMENT",
+    "L": "FIXED PRICE INCENTIVE",
+    "M": "FIXED PRICE AWARD FEE",
+    "T": "COST PLUS INCENTIVE FEE",
+    "Z": "LABOR HOURS",
+}
+SET_ASIDE_TYPE_OPTIONS = {
+    "SBA": "Small Business Set-Aside",
+    "SBP": "Small Business Partial Set-Aside",
+    "8A": "8(a) Competed",
+    "8AN": "8(a) Sole Source",
+    "WOSB": "Women-Owned Small Business",
+    "EDWOSB": "Economically Disadvantaged WOSB",
+    "SDVOSBC": "Service-Disabled Veteran-Owned Small Business",
+    "HZS": "HUBZone Sole Source",
+    "HZC": "HUBZone Set-Aside",
+}
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
     "N": "Cancellation",
 }
-TRANSACTION_FIELDS = [
+CORE_TRANSACTION_FIELDS = [
     "Award ID",
     "Mod",
     "Transaction Description",
@@ -51,8 +80,14 @@ TRANSACTION_FIELDS = [
     "Awarding Office Code",
     "Awarding Office Name",
 ]
+TRANSACTION_FIELDS = [
+    *CORE_TRANSACTION_FIELDS,
+    "NAICS",
+    "PSC",
+    "Primary Place of Performance",
+]
 BASE_TRANSACTION_FIELDS = [
-    field for field in TRANSACTION_FIELDS if "Office" not in field
+    field for field in CORE_TRANSACTION_FIELDS if "Office" not in field
 ]
 CANCELLATION_TERMS = ("TERMINATION", "CANCEL", "CONVENIENCE", "DEFAULT")
 EXPLICIT_TERMINATION_TERMS = ("TERMINAT",)
@@ -561,6 +596,47 @@ def first_present(mapping: dict, keys: list[str]):
     return None
 
 
+def encode_option(code: str, description: str = "") -> str:
+    return f"{str(code).strip()}{OPTION_SEPARATOR}{str(description or '').strip()}"
+
+
+def decode_option(option: str | None) -> tuple[str, str]:
+    if not option or OPTION_SEPARATOR not in str(option):
+        return str(option or "").strip(), ""
+    code, description = str(option).split(OPTION_SEPARATOR, 1)
+    return code.strip(), description.strip()
+
+
+def format_code_description_option(option: str) -> str:
+    code, description = decode_option(option)
+    if description:
+        return f"{code} — {description}"
+    return code
+
+
+def default_market_filters() -> dict:
+    return {
+        "naics_code": ALL_NAICS_CODES,
+        "contract_type": ALL_CONTRACT_TYPES,
+        "psc_code": ALL_PRODUCT_SERVICE_CODES,
+        "set_aside_type": ALL_SET_ASIDE_TYPES,
+        "pop_state": ALL_POP_STATES,
+    }
+
+
+def normalize_market_filters(market_filters: dict | None) -> dict:
+    normalized = default_market_filters()
+    if isinstance(market_filters, dict):
+        normalized.update({key: value for key, value in market_filters.items() if value})
+    return normalized
+
+
+def market_filters_without_contract_type(market_filters: dict | None) -> dict:
+    normalized = normalize_market_filters(market_filters)
+    normalized["contract_type"] = ALL_CONTRACT_TYPES
+    return normalized
+
+
 def format_money(value) -> str:
     try:
         amount = float(value)
@@ -657,20 +733,48 @@ def agency_filter(agency_name: str, bureau_name: str | None = None) -> list[dict
     return [{"type": "awarding", "tier": "toptier", "name": toptier_name}]
 
 
-def contract_award_filters(agency_name: str, bureau_name: str | None = None) -> dict:
-    return {
+def contract_award_filters(
+    agency_name: str,
+    bureau_name: str | None = None,
+    market_filters: dict | None = None,
+) -> dict:
+    filters = {
         "agencies": agency_filter(agency_name, bureau_name),
         "award_type_codes": AWARD_TYPE_CODES,
         "award_or_idv_flag": AWARD_OR_IDV_FLAG,
     }
+    market_filters = normalize_market_filters(market_filters)
+
+    naics_code, _naics_description = decode_option(market_filters["naics_code"])
+    if naics_code and naics_code != ALL_NAICS_CODES:
+        filters["naics_codes"] = {"require": [naics_code]}
+
+    contract_type_code, _contract_type_description = decode_option(market_filters["contract_type"])
+    if contract_type_code and contract_type_code != ALL_CONTRACT_TYPES:
+        filters["contract_pricing_type_codes"] = [contract_type_code]
+
+    psc_code, _psc_description = decode_option(market_filters["psc_code"])
+    if psc_code and psc_code != ALL_PRODUCT_SERVICE_CODES:
+        filters["psc_codes"] = [psc_code]
+
+    set_aside_code, _set_aside_description = decode_option(market_filters["set_aside_type"])
+    if set_aside_code and set_aside_code != ALL_SET_ASIDE_TYPES:
+        filters["set_aside_type_codes"] = [set_aside_code]
+
+    pop_state, _state_description = decode_option(market_filters["pop_state"])
+    if pop_state and pop_state != ALL_POP_STATES:
+        filters["place_of_performance_locations"] = [{"country": "USA", "state": pop_state}]
+
+    return filters
 
 
 def build_trends_payload(
     agency_name: str,
     bureau_name: str | None = None,
     time_period: list[dict] | None = None,
+    market_filters: dict | None = None,
 ) -> dict:
-    filters = contract_award_filters(agency_name, bureau_name)
+    filters = contract_award_filters(agency_name, bureau_name, market_filters)
     if time_period:
         filters["time_period"] = time_period
     return {
@@ -680,13 +784,46 @@ def build_trends_payload(
     }
 
 
-def build_vendor_payload(agency_name: str, bureau_name: str | None = None) -> dict:
+def build_vendor_payload(
+    agency_name: str,
+    bureau_name: str | None = None,
+    market_filters: dict | None = None,
+) -> dict:
     return {
         "category": "recipient",
         "spending_level": "awards",
         "limit": 10,
         "page": 1,
-        "filters": contract_award_filters(agency_name, bureau_name),
+        "filters": contract_award_filters(agency_name, bureau_name, market_filters),
+    }
+
+
+def build_contract_type_options_payload(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+    contract_type_code: str,
+    market_filters: dict | None = None,
+) -> dict:
+    start_date, end_date = fiscal_year_date_range(fiscal_year)
+    scoped_filters = market_filters_without_contract_type(market_filters)
+    scoped_filters["contract_type"] = encode_option(
+        contract_type_code,
+        CONTRACT_TYPE_OPTIONS.get(contract_type_code, ""),
+    )
+    filters = contract_award_filters(
+        agency_name,
+        bureau_name,
+        scoped_filters,
+    )
+    filters["time_period"] = [{"start_date": start_date, "end_date": end_date}]
+    return {
+        "filters": filters,
+        "fields": ["Award ID", "Transaction Amount", "Action Date"],
+        "limit": 1,
+        "page": 1,
+        "sort": "Action Date",
+        "order": "desc",
     }
 
 
@@ -713,10 +850,11 @@ def build_transaction_payload(
     end_date: str,
     page: int = 1,
     include_office_fields: bool = True,
+    market_filters: dict | None = None,
 ) -> dict:
     return {
         "filters": {
-            **contract_award_filters(agency_name, bureau_name),
+            **contract_award_filters(agency_name, bureau_name, market_filters),
             "time_period": [{"start_date": start_date, "end_date": end_date}],
         },
         "fields": TRANSACTION_FIELDS if include_office_fields else BASE_TRANSACTION_FIELDS,
@@ -977,6 +1115,128 @@ def contracting_office_matches(item: dict, contracting_office: str | None) -> bo
     return bool(selected_name) and item_name.lower() == selected_name.lower()
 
 
+def extract_code_description(value) -> tuple[str, str]:
+    if isinstance(value, dict):
+        code = clean_office_value(
+            first_present(value, ["code", "id", "naics", "psc", "type", "award_type_code"])
+        )
+        description = clean_office_value(
+            first_present(value, ["description", "name", "label", "text"])
+        )
+        return code, description
+    if isinstance(value, list) and value:
+        return extract_code_description(value[0])
+    text = clean_office_value(value)
+    if " - " in text:
+        code, description = text.split(" - ", 1)
+        return code.strip(), description.strip()
+    if " — " in text:
+        code, description = text.split(" — ", 1)
+        return code.strip(), description.strip()
+    return text, ""
+
+
+def transaction_naics_parts(item: dict) -> tuple[str, str]:
+    code, description = extract_code_description(
+        first_present(item, ["NAICS", "naics", "naics_code", "naics_description"])
+    )
+    code = code or clean_office_value(first_present(item, ["NAICS Code", "naics_code"]))
+    description = description or clean_office_value(
+        first_present(item, ["NAICS Description", "naics_description"])
+    )
+    return code, description
+
+
+def transaction_psc_parts(item: dict) -> tuple[str, str]:
+    code, description = extract_code_description(
+        first_present(item, ["PSC", "psc", "psc_code", "psc_description"])
+    )
+    code = code or clean_office_value(first_present(item, ["PSC Code", "psc_code"]))
+    description = description or clean_office_value(
+        first_present(item, ["PSC Description", "psc_description"])
+    )
+    return code, description
+
+
+def transaction_contract_type_parts(item: dict) -> tuple[str, str]:
+    code = clean_office_value(
+        first_present(
+            item,
+            [
+                "Type of Contract Pricing Code",
+                "type_of_contract_pricing_code",
+                "contract_pricing_type_code",
+            ],
+        )
+    )
+    description = clean_office_value(
+        first_present(
+            item,
+            [
+                "Type of Contract Pricing",
+                "type_of_contract_pricing",
+                "contract_pricing_type",
+            ],
+        )
+    )
+    if not code and description in CONTRACT_TYPE_OPTIONS:
+        code = description
+        description = CONTRACT_TYPE_OPTIONS[code]
+    if code and not description:
+        description = CONTRACT_TYPE_OPTIONS.get(code, code)
+    return code, description
+
+
+def transaction_pop_state_parts(item: dict) -> tuple[str, str]:
+    place = first_present(
+        item,
+        [
+            "Primary Place of Performance",
+            "primary_place_of_performance",
+            "Place of Performance",
+            "place_of_performance",
+        ],
+    )
+    if isinstance(place, dict):
+        state = clean_office_value(first_present(place, ["state", "state_code"]))
+        state_name = clean_office_value(first_present(place, ["state_name", "name"]))
+        return state, state_name
+    return clean_office_value(first_present(item, ["Place of Performance State Code", "pop_state"])), ""
+
+
+def transaction_matches_market_filters(item: dict, market_filters: dict | None) -> bool:
+    market_filters = normalize_market_filters(market_filters)
+
+    naics_code, _naics_description = decode_option(market_filters["naics_code"])
+    if naics_code and naics_code != ALL_NAICS_CODES:
+        item_naics, _item_naics_description = transaction_naics_parts(item)
+        if not item_naics.startswith(naics_code):
+            return False
+
+    contract_type_code, contract_type_description = decode_option(market_filters["contract_type"])
+    if contract_type_code and contract_type_code != ALL_CONTRACT_TYPES:
+        item_contract_type, item_contract_description = transaction_contract_type_parts(item)
+        if (item_contract_type or item_contract_description) and (
+            item_contract_type.lower() != contract_type_code.lower()
+            and item_contract_description.lower() != contract_type_description.lower()
+        ):
+            return False
+
+    psc_code, _psc_description = decode_option(market_filters["psc_code"])
+    if psc_code and psc_code != ALL_PRODUCT_SERVICE_CODES:
+        item_psc, _item_psc_description = transaction_psc_parts(item)
+        if not item_psc.startswith(psc_code):
+            return False
+
+    pop_state, _state_description = decode_option(market_filters["pop_state"])
+    if pop_state and pop_state != ALL_POP_STATES:
+        item_state, _item_state_description = transaction_pop_state_parts(item)
+        if item_state.lower() != pop_state.lower():
+            return False
+
+    return True
+
+
 def parse_action_type_code(value) -> str:
     if value is None:
         return ""
@@ -1141,6 +1401,7 @@ def fetch_transaction_page(
     start_date: str,
     end_date: str,
     page: int,
+    market_filters: dict | None = None,
 ) -> tuple[dict | None, str | None, dict]:
     payload = build_transaction_payload(
         agency_name,
@@ -1148,6 +1409,7 @@ def fetch_transaction_page(
         start_date,
         end_date,
         page=page,
+        market_filters=market_filters,
     )
     data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
     if error:
@@ -1158,6 +1420,7 @@ def fetch_transaction_page(
             end_date,
             page=page,
             include_office_fields=False,
+            market_filters=market_filters,
         )
         fallback_data, fallback_error = post_usaspending(
             "/api/v2/search/spending_by_transaction/",
@@ -1174,8 +1437,9 @@ def fetch_transaction_page(
 def fetch_trends(
     agency_name: str,
     bureau_name: str | None,
+    market_filters: dict | None = None,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
-    payload = build_trends_payload(agency_name, bureau_name)
+    payload = build_trends_payload(agency_name, bureau_name, market_filters=market_filters)
     data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
     if data:
         df = normalize_trend_response(data)
@@ -1183,7 +1447,7 @@ def fetch_trends(
             return df, payload, "Live USAspending.gov", None
 
     if bureau_filter_active(bureau_name):
-        fallback_payload = build_trends_payload(agency_name, None)
+        fallback_payload = build_trends_payload(agency_name, None, market_filters=market_filters)
         fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_over_time/", fallback_payload)
         if fallback_data:
             fallback_df = normalize_trend_response(fallback_data)
@@ -1205,11 +1469,13 @@ def fetch_trend_period_total(
     bureau_name: str | None,
     start_date: str,
     end_date: str,
+    market_filters: dict | None = None,
 ) -> tuple[float | None, dict, str | None]:
     payload = build_trends_payload(
         agency_name,
         bureau_name,
         time_period=[{"start_date": start_date, "end_date": end_date}],
+        market_filters=market_filters,
     )
     data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
     if data:
@@ -1223,8 +1489,9 @@ def fetch_trend_period_total(
 def fetch_vendors(
     agency_name: str,
     bureau_name: str | None,
+    market_filters: dict | None = None,
 ) -> tuple[pd.DataFrame, int, dict, str, str | None]:
-    payload = build_vendor_payload(agency_name, bureau_name)
+    payload = build_vendor_payload(agency_name, bureau_name, market_filters)
     data, error = post_usaspending("/api/v2/search/spending_by_category/recipient/", payload)
     if data:
         df, contractor_count = normalize_vendor_response(data)
@@ -1238,7 +1505,7 @@ def fetch_vendors(
             )
 
     if bureau_filter_active(bureau_name):
-        fallback_payload = build_vendor_payload(agency_name, None)
+        fallback_payload = build_vendor_payload(agency_name, None, market_filters)
         fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_by_category/recipient/", fallback_payload)
         if fallback_data:
             fallback_df, fallback_contractor_count = normalize_vendor_response(fallback_data)
@@ -1269,6 +1536,7 @@ def fetch_transaction_pages(
     progress_text=None,
     contracting_office: str | None = None,
     include_positive: bool = False,
+    market_filters: dict | None = None,
 ) -> tuple[list[dict], dict, str | None, int, float]:
     master_rows = []
     payload_log = build_transaction_payload(
@@ -1277,6 +1545,7 @@ def fetch_transaction_pages(
         start_date,
         end_date,
         page=1,
+        market_filters=market_filters,
     )
     if contracting_office and contracting_office != ALL_CONTRACTING_OFFICES:
         office_code, office_name = decode_contracting_office(contracting_office)
@@ -1302,6 +1571,7 @@ def fetch_transaction_pages(
             start_date,
             end_date,
             page=page,
+            market_filters=market_filters,
         )
         if not data:
             first_error = first_error or error or f"Transaction page {page} returned no data"
@@ -1318,7 +1588,10 @@ def fetch_transaction_pages(
         seen_page_signatures.add(signature)
 
         scoped_rows = [
-            row for row in page_rows if contracting_office_matches(row, contracting_office)
+            row
+            for row in page_rows
+            if contracting_office_matches(row, contracting_office)
+            and transaction_matches_market_filters(row, market_filters)
         ]
         total_obligation_magnitude += sum(abs(transaction_amount(row)) for row in scoped_rows)
         master_rows.extend(
@@ -1343,6 +1616,7 @@ def fetch_transactions(
     fiscal_year: int,
     contracting_office: str | None = None,
     include_positive: bool = False,
+    market_filters: dict | None = None,
     progress_text=None,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
     start_date, end_date = fiscal_year_date_range(fiscal_year)
@@ -1358,6 +1632,7 @@ def fetch_transactions(
             progress_text,
             contracting_office=contracting_office,
             include_positive=include_positive,
+            market_filters=market_filters,
         )
         transaction_df = normalize_transaction_response(master_rows)
 
@@ -1380,6 +1655,7 @@ def fetch_transactions(
                 progress_text,
                 contracting_office=contracting_office,
                 include_positive=include_positive,
+                market_filters=market_filters,
             )
             fallback_df = normalize_transaction_response(fallback_rows)
             if fallback_records_seen > 0 and fallback_obligation_magnitude > 0:
@@ -1405,6 +1681,7 @@ def fetch_transaction_period_total(
     start_date: str,
     end_date: str,
     contracting_office: str | None = None,
+    market_filters: dict | None = None,
 ) -> tuple[float | None, dict, str | None]:
     rows, payload_log, first_error, records_seen, _obligation_magnitude = fetch_transaction_pages(
         agency_name,
@@ -1413,6 +1690,7 @@ def fetch_transaction_period_total(
         end_date,
         contracting_office=contracting_office,
         include_positive=True,
+        market_filters=market_filters,
     )
     if records_seen == 0:
         return None, payload_log, first_error or "No transaction rows returned"
@@ -1538,6 +1816,106 @@ def fetch_contracting_offices(
     return [ALL_CONTRACTING_OFFICES] + office_options if office_options else []
 
 
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def fetch_contract_type_options(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+    market_filters: dict | None = None,
+) -> list[str]:
+    contract_type_options = {}
+    for code, label in CONTRACT_TYPE_OPTIONS.items():
+        payload = build_contract_type_options_payload(
+            agency_name,
+            bureau_name,
+            fiscal_year,
+            code,
+            market_filters=market_filters,
+        )
+        data, error = post_usaspending("/api/v2/search/spending_by_transaction/", payload)
+        if error or not data:
+            continue
+
+        page_rows = data.get("results") or []
+        if not page_rows:
+            continue
+        contract_type_options[code] = encode_option(code, label)
+
+    if not contract_type_options:
+        contract_type_options = {
+            code: encode_option(code, label) for code, label in CONTRACT_TYPE_OPTIONS.items()
+        }
+
+    return [ALL_CONTRACT_TYPES] + sorted(
+        contract_type_options.values(),
+        key=lambda option: format_code_description_option(option).lower(),
+    )
+
+
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def fetch_market_filter_options(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+) -> dict:
+    start_date, end_date = fiscal_year_date_range(fiscal_year)
+    naics_options = {}
+    psc_options = {}
+    state_options = {}
+    seen_page_signatures = set()
+    page = 1
+    has_next = True
+
+    while has_next:
+        data, error, _payload = fetch_transaction_page(
+            agency_name,
+            bureau_name,
+            start_date,
+            end_date,
+            page=page,
+        )
+        if error or not data:
+            break
+
+        page_rows = data.get("results") or []
+        if not page_rows:
+            break
+
+        signature = transaction_page_signature(page_rows)
+        if signature in seen_page_signatures:
+            break
+        seen_page_signatures.add(signature)
+
+        for row in page_rows:
+            naics_code, naics_description = transaction_naics_parts(row)
+            if naics_code:
+                naics_options[naics_code] = encode_option(naics_code, naics_description)
+
+            psc_code, psc_description = transaction_psc_parts(row)
+            if psc_code:
+                psc_options[psc_code] = encode_option(psc_code, psc_description)
+
+            state_code, state_name = transaction_pop_state_parts(row)
+            if state_code:
+                state_options[state_code] = encode_option(state_code, state_name)
+
+        has_next = response_has_next(data.get("page_metadata") or {})
+        page += 1
+        if page > 100:
+            break
+
+    return {
+        "naics": [ALL_NAICS_CODES] + sorted(naics_options.values(), key=format_code_description_option),
+        "psc": [ALL_PRODUCT_SERVICE_CODES] + sorted(psc_options.values(), key=format_code_description_option),
+        "set_asides": [ALL_SET_ASIDE_TYPES]
+        + [
+            encode_option(code, label)
+            for code, label in sorted(SET_ASIDE_TYPE_OPTIONS.items(), key=lambda item: item[1])
+        ],
+        "states": [ALL_POP_STATES] + sorted(state_options.values(), key=format_code_description_option),
+    }
+
+
 def metric_card(
     label: str,
     value: str,
@@ -1579,11 +1957,14 @@ def source_chip(label: str) -> None:
 
 
 def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
-    chart_df = df.copy()
+    chart_df = df.copy().sort_values("fiscal_year")
     chart_df["display_amount"] = chart_df["amount"].apply(format_money_with_full)
     chart_df["fiscal_year_label"] = chart_df["fiscal_year"].apply(fiscal_year_label)
     max_value = float(chart_df["amount"].max() or 0) if not chart_df.empty else 0
     tickvals, ticktext = money_ticks(max_value)
+    current_fy = current_fiscal_year()
+    completed_df = chart_df[chart_df["fiscal_year"] < current_fy].copy()
+    current_ytd_df = chart_df[chart_df["fiscal_year"] == current_fy].copy()
 
     fig = go.Figure()
     if chart_df.empty:
@@ -1597,20 +1978,49 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
             font=dict(color="#dce5ef", size=14),
         )
     else:
-        fig.add_trace(
-            go.Scatter(
-                x=chart_df["fiscal_year_label"],
-                y=chart_df["amount"],
-                customdata=chart_df["display_amount"],
-                mode="lines+markers",
-                line=dict(color="#2dd4bf", width=4, shape="spline"),
-                marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
-                hovertemplate="<b>%{x}</b><br>Contract Obligations: %{customdata}<extra></extra>",
-                name="Contract Obligations",
+        if not completed_df.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=completed_df["fiscal_year_label"],
+                    y=completed_df["amount"],
+                    customdata=completed_df["display_amount"],
+                    mode="lines+markers",
+                    line=dict(color="#2dd4bf", width=4, shape="spline"),
+                    marker=dict(size=9, color="#f4f7fb", line=dict(color="#2dd4bf", width=2)),
+                    hovertemplate="<b>%{x} Contract Obligations</b><br>%{customdata}<extra></extra>",
+                    name="Completed Fiscal Years",
+                )
             )
-        )
+        if not current_ytd_df.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=current_ytd_df["fiscal_year_label"],
+                    y=current_ytd_df["amount"],
+                    customdata=current_ytd_df["display_amount"],
+                    mode="markers",
+                    marker=dict(size=14, color="#f59e0b", line=dict(color="#fef3c7", width=2)),
+                    hovertemplate=(
+                        "<b>%{x} Contract Obligations</b><br>"
+                        "%{customdata}<br>Year-to-date only<extra></extra>"
+                    ),
+                    name="Current FY YTD",
+                )
+            )
+            fig.add_annotation(
+                x=current_ytd_df["fiscal_year_label"].iloc[0],
+                y=float(current_ytd_df["amount"].iloc[0]),
+                text="YTD only",
+                showarrow=True,
+                arrowcolor="#f59e0b",
+                ax=0,
+                ay=-35,
+                font=dict(color="#fef3c7", size=12),
+                bgcolor="rgba(15, 23, 42, 0.85)",
+                bordercolor="rgba(245, 158, 11, 0.7)",
+                borderwidth=1,
+            )
     fig.update_layout(
-        title=dict(text="Spend Trend", font=dict(size=18, color="#f4f7fb")),
+        title=dict(text="Contract Obligation Trend", font=dict(size=18, color="#f4f7fb")),
         height=430,
         margin=dict(l=20, r=20, t=30, b=20),
         paper_bgcolor="rgba(0,0,0,0)",
@@ -1628,7 +2038,8 @@ def make_trend_chart(df: pd.DataFrame, selected_year: int) -> go.Figure:
             ticktext=ticktext,
             zeroline=False,
         ),
-        showlegend=False,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
 
@@ -1779,6 +2190,7 @@ def yoy_comparison_context(
     current_total: float,
     office_filter_active: bool,
     selected_contracting_office: str,
+    selected_market_filters: dict,
 ) -> tuple[float | None, str, str]:
     if selected_year == current_fiscal_year():
         prior_start, prior_end = prior_ytd_date_range(selected_year)
@@ -1789,6 +2201,7 @@ def yoy_comparison_context(
                 prior_start,
                 prior_end,
                 contracting_office=selected_contracting_office,
+                market_filters=selected_market_filters,
             )
         else:
             previous_total, _payload, _error = fetch_trend_period_total(
@@ -1796,6 +2209,7 @@ def yoy_comparison_context(
                 selected_bureau,
                 prior_start,
                 prior_end,
+                market_filters=selected_market_filters,
             )
         return (
             previous_total,
@@ -1811,6 +2225,7 @@ def yoy_comparison_context(
             prior_start,
             prior_end,
             contracting_office=selected_contracting_office,
+            market_filters=selected_market_filters,
         )
     else:
         _current_total, previous_total = current_and_previous(trend_df, selected_year)
@@ -1855,12 +2270,14 @@ def mark_analysis_started(
     selected_bureau: str,
     selected_year: int,
     selected_contracting_office: str,
+    selected_market_filters: dict,
 ) -> None:
     st.session_state.dashboard_started = True
     st.session_state.analyzed_agency = active_agency
     st.session_state.analyzed_bureau = selected_bureau
     st.session_state.analyzed_year = int(selected_year)
     st.session_state.analyzed_contracting_office = selected_contracting_office
+    st.session_state.analyzed_market_filters = normalize_market_filters(selected_market_filters)
 
 
 def render_landing_page(agency_records: list[dict]) -> None:
@@ -1884,12 +2301,19 @@ def render_landing_page(agency_records: list[dict]) -> None:
             selected_year,
             _active_toptier_code,
             selected_contracting_office,
+            selected_market_filters,
         ) = render_market_selectors(
             agency_records
         )
         st.write("")
         if st.button("Run Data Analysis", type="primary", use_container_width=True):
-            mark_analysis_started(active_agency, selected_bureau, selected_year, selected_contracting_office)
+            mark_analysis_started(
+                active_agency,
+                selected_bureau,
+                selected_year,
+                selected_contracting_office,
+                selected_market_filters,
+            )
             st.rerun()
 
         st.divider()
@@ -1900,7 +2324,7 @@ def render_landing_page(agency_records: list[dict]) -> None:
             st.caption(f"Contracting office: {format_contracting_office_option(selected_contracting_office)}")
 
 
-def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str, str]:
+def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str, str, dict]:
     agency_options = agency_names_from_records(agency_records)
     if not agency_options:
         st.error("USAspending agency registry is unavailable. Please refresh and try again.")
@@ -1946,28 +2370,126 @@ def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, 
             index=bureau_options.index(active_bureau),
         )
 
+    filter_options = fetch_market_filter_options(active_agency, selected_bureau, int(selected_year))
+    active_market_filters = normalize_market_filters(st.session_state.active_market_filters)
+
+    naics_options = filter_options["naics"]
+    active_naics = active_market_filters["naics_code"]
+    if active_naics not in naics_options:
+        active_naics = ALL_NAICS_CODES
+    selected_naics = st.selectbox(
+        "NAICS Code",
+        naics_options,
+        index=naics_options.index(active_naics),
+        format_func=lambda option: option if option == ALL_NAICS_CODES else format_code_description_option(option),
+    )
+
+    contract_type_scope_filters = normalize_market_filters(
+        {
+            **active_market_filters,
+            "naics_code": selected_naics,
+            "contract_type": ALL_CONTRACT_TYPES,
+        }
+    )
+    contract_type_options = fetch_contract_type_options(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+        market_filters=contract_type_scope_filters,
+    )
+    active_contract_type = active_market_filters["contract_type"]
+    if active_contract_type not in contract_type_options:
+        active_contract_type = ALL_CONTRACT_TYPES
+    selected_contract_type = st.selectbox(
+        "Contract Type",
+        contract_type_options,
+        index=contract_type_options.index(active_contract_type),
+        format_func=lambda option: option if option == ALL_CONTRACT_TYPES else format_code_description_option(option),
+    )
+
     selected_contracting_office = ALL_CONTRACTING_OFFICES
-    if selected_bureau != ALL_BUREAUS:
-        office_options = fetch_contracting_offices(active_agency, selected_bureau, int(selected_year))
-        if office_options:
-            selected_contracting_office = st.selectbox(
-                "Contracting Office",
-                office_options,
-                index=0,
-                format_func=format_contracting_office_option,
-                help="Optional. Narrow results to a specific office that issued the awards.",
+    selected_psc = ALL_PRODUCT_SERVICE_CODES
+    selected_set_aside = ALL_SET_ASIDE_TYPES
+    selected_pop_state = ALL_POP_STATES
+
+    with st.expander("Advanced Filters"):
+        if selected_bureau != ALL_BUREAUS:
+            office_options = fetch_contracting_offices(active_agency, selected_bureau, int(selected_year))
+            if office_options:
+                selected_contracting_office = st.selectbox(
+                    "Contracting Office",
+                    office_options,
+                    index=0,
+                    format_func=format_contracting_office_option,
+                    help="Optional. Narrow results to a specific office that issued the awards.",
+                )
+                st.caption("Optional. Narrow results to a specific office that issued the awards.")
+            else:
+                st.caption("No contracting office breakdown available for this selection.")
+
+        psc_options = filter_options["psc"]
+        active_psc = active_market_filters["psc_code"]
+        if active_psc not in psc_options:
+            active_psc = ALL_PRODUCT_SERVICE_CODES
+        selected_psc = st.selectbox(
+            "Product / Service Code",
+            psc_options,
+            index=psc_options.index(active_psc),
+            format_func=lambda option: option
+            if option == ALL_PRODUCT_SERVICE_CODES
+            else format_code_description_option(option),
+        )
+
+        set_aside_options = filter_options["set_asides"]
+        active_set_aside = active_market_filters["set_aside_type"]
+        if active_set_aside not in set_aside_options:
+            active_set_aside = ALL_SET_ASIDE_TYPES
+        selected_set_aside = st.selectbox(
+            "Set-Aside Type",
+            set_aside_options,
+            index=set_aside_options.index(active_set_aside),
+            format_func=lambda option: option if option == ALL_SET_ASIDE_TYPES else format_code_description_option(option),
+        )
+
+        state_options = filter_options["states"]
+        active_pop_state = active_market_filters["pop_state"]
+        if active_pop_state not in state_options:
+            active_pop_state = ALL_POP_STATES
+        if len(state_options) > 1:
+            selected_pop_state = st.selectbox(
+                "Place of Performance State",
+                state_options,
+                index=state_options.index(active_pop_state),
+                format_func=lambda option: option if option == ALL_POP_STATES else format_code_description_option(option),
             )
-            st.caption("Optional. Narrow results to a specific office that issued the awards.")
         else:
-            st.caption("No contracting office breakdown available for this selection.")
+            st.caption("No place of performance state breakdown available for this selection.")
+
+    selected_market_filters = normalize_market_filters(
+        {
+            "naics_code": selected_naics,
+            "contract_type": selected_contract_type,
+            "psc_code": selected_psc,
+            "set_aside_type": selected_set_aside,
+            "pop_state": selected_pop_state,
+        }
+    )
 
     st.session_state.active_agency = active_agency
     st.session_state.active_toptier_code = active_toptier_code
     st.session_state.active_bureau = selected_bureau
     st.session_state.active_fiscal_year = int(selected_year)
     st.session_state.active_contracting_office = selected_contracting_office
+    st.session_state.active_market_filters = selected_market_filters
 
-    return active_agency, selected_bureau, int(selected_year), active_toptier_code, selected_contracting_office
+    return (
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+        active_toptier_code,
+        selected_contracting_office,
+        selected_market_filters,
+    )
 
 
 def render_dashboard_header(active_agency: str, selected_bureau: str | None) -> None:
@@ -1990,7 +2512,9 @@ def render_analysis_dashboard(
     selected_bureau: str | None,
     selected_year: int,
     selected_contracting_office: str,
+    selected_market_filters: dict,
 ) -> None:
+    selected_market_filters = normalize_market_filters(selected_market_filters)
     office_filter_active = selected_contracting_office != ALL_CONTRACTING_OFFICES
     transaction_df = pd.DataFrame()
     transaction_payload = {}
@@ -2004,6 +2528,7 @@ def render_analysis_dashboard(
             int(selected_year),
             contracting_office=selected_contracting_office,
             include_positive=True,
+            market_filters=selected_market_filters,
             progress_text=progress_text,
         )
         trend_df = transaction_trend_dataframe(transaction_df, int(selected_year))
@@ -2015,10 +2540,15 @@ def render_analysis_dashboard(
         trend_error = transaction_error
         vendor_error = transaction_error
     else:
-        trend_df, trend_payload, trend_source, trend_error = fetch_trends(active_agency, selected_bureau)
+        trend_df, trend_payload, trend_source, trend_error = fetch_trends(
+            active_agency,
+            selected_bureau,
+            market_filters=selected_market_filters,
+        )
         vendor_df, contractor_count, vendor_payload, vendor_source, vendor_error = fetch_vendors(
             active_agency,
             selected_bureau,
+            market_filters=selected_market_filters,
         )
 
     macro_live = trend_source.startswith("Live") and vendor_source.startswith("Live")
@@ -2050,6 +2580,7 @@ def render_analysis_dashboard(
         current_total,
         office_filter_active,
         selected_contracting_office,
+        selected_market_filters,
     )
     yoy_delta = None
     if previous_total and previous_total > 0:
@@ -2094,6 +2625,10 @@ def render_analysis_dashboard(
             use_container_width=True,
             config={"responsive": True, "displayModeBar": False},
         )
+        if not trend_df.empty and int(current_fiscal_year()) in set(trend_df["fiscal_year"].astype(int)):
+            st.caption(
+                "Current fiscal year is year-to-date and is not directly comparable to completed fiscal years."
+            )
     with chart_cols[1]:
         if vendor_df.empty:
             st.error("Top Contractor Leaderboard unavailable from USAspending.gov.")
@@ -2112,6 +2647,7 @@ def render_analysis_dashboard(
             selected_bureau,
             int(selected_year),
             contracting_office=None,
+            market_filters=selected_market_filters,
             progress_text=progress_text,
         )
     if transaction_error:
@@ -2175,6 +2711,8 @@ def main() -> None:
         st.session_state.active_fiscal_year = current_fiscal_year()
     if "active_contracting_office" not in st.session_state:
         st.session_state.active_contracting_office = ALL_CONTRACTING_OFFICES
+    if "active_market_filters" not in st.session_state:
+        st.session_state.active_market_filters = default_market_filters()
 
     # Persistent state tracking to prevent the dashboard from vanishing on chart interaction
     if "analyzed_agency" not in st.session_state:
@@ -2185,6 +2723,8 @@ def main() -> None:
         st.session_state.analyzed_year = None
     if "analyzed_contracting_office" not in st.session_state:
         st.session_state.analyzed_contracting_office = ALL_CONTRACTING_OFFICES
+    if "analyzed_market_filters" not in st.session_state:
+        st.session_state.analyzed_market_filters = default_market_filters()
     if "dashboard_started" not in st.session_state:
         st.session_state.dashboard_started = False
 
@@ -2216,6 +2756,7 @@ def main() -> None:
             selected_year,
             _active_toptier_code,
             selected_contracting_office,
+            selected_market_filters,
         ) = render_market_selectors(
             agency_records
         )
@@ -2233,15 +2774,28 @@ def main() -> None:
 
     # Lock in parameters when the button is clicked
     if analysis_triggered:
-        mark_analysis_started(active_agency, selected_bureau, selected_year, selected_contracting_office)
+        mark_analysis_started(
+            active_agency,
+            selected_bureau,
+            selected_year,
+            selected_contracting_office,
+            selected_market_filters,
+        )
 
     # Only show results if current sidebar selections match what was explicitly analyzed
     if (st.session_state.analyzed_agency == active_agency and 
         st.session_state.analyzed_bureau == selected_bureau and 
         st.session_state.analyzed_year == selected_year and
-        st.session_state.analyzed_contracting_office == selected_contracting_office):
+        st.session_state.analyzed_contracting_office == selected_contracting_office and
+        normalize_market_filters(st.session_state.analyzed_market_filters) == selected_market_filters):
         
-        render_analysis_dashboard(active_agency, selected_bureau, selected_year, selected_contracting_office)
+        render_analysis_dashboard(
+            active_agency,
+            selected_bureau,
+            selected_year,
+            selected_contracting_office,
+            selected_market_filters,
+        )
     else:
         st.info("👈 Select your parameters in the Control Panel and click 'Run Data Analysis' to begin.")
 
