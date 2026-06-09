@@ -9,6 +9,7 @@ import time
 import zipfile
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -19,7 +20,7 @@ from pypdf import PdfReader
 
 
 BASE_URL = "https://api.usaspending.gov"
-APP_CACHE_VERSION = "v4_cache_reset_after_award_scope_fix"
+APP_CACHE_VERSION = "v5_cache_reset_after_lane_mix_fields"
 AWARD_TYPE_CODES = ["A", "B", "C", "D"]
 AWARD_OR_IDV_FLAG = "AWARD"
 ALL_BUREAUS = "All Bureaus"
@@ -812,6 +813,119 @@ def inject_styles() -> None:
             letter-spacing: 0;
             margin: 26px 0 12px;
         }
+        .award-drilldown-table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            background: #ffffff;
+            margin-top: 8px;
+        }
+        .award-drilldown-table {
+            width: 100%;
+            border-collapse: collapse;
+            color: #1A1A1A;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+        .award-drilldown-table th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #f3f6fb;
+            color: #1A1A1A;
+            font-weight: 850;
+            text-align: left;
+            white-space: nowrap;
+            padding: 10px 12px;
+            border-bottom: 1px solid rgba(15, 23, 42, 0.16);
+        }
+        .award-drilldown-table td {
+            max-width: 260px;
+            padding: 9px 12px;
+            border-bottom: 1px solid rgba(15, 23, 42, 0.10);
+            vertical-align: top;
+        }
+        .award-drilldown-table td:nth-child(3),
+        .award-drilldown-table td:nth-child(8),
+        .award-drilldown-table td:nth-child(9) {
+            min-width: 220px;
+        }
+        .award-drilldown-table a {
+            color: #0369a1;
+            font-weight: 800;
+            text-decoration: none;
+            white-space: nowrap;
+        }
+        .award-drilldown-table a:hover {
+            text-decoration: underline;
+        }
+        .market-intel-card,
+        .market-intel-note {
+            min-height: 136px;
+            padding: 18px 18px 16px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: linear-gradient(180deg, rgba(31, 36, 48, 0.98), rgba(22, 25, 34, 0.98));
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 18px 42px rgba(0,0,0,0.20);
+            position: relative;
+            overflow: hidden;
+        }
+        .market-intel-card:before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--accent, var(--teal));
+        }
+        .market-intel-label {
+            color: var(--muted);
+            font-size: 13px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .market-intel-value {
+            color: var(--text);
+            font-size: 30px;
+            line-height: 1.05;
+            font-weight: 900;
+        }
+        .market-intel-subtitle {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 800;
+            margin-top: 6px;
+        }
+        .market-intel-helper {
+            color: rgba(170, 180, 194, 0.90);
+            font-size: 12px;
+            line-height: 1.35;
+            margin-top: 8px;
+        }
+        .market-concentration-bar {
+            display: flex;
+            width: 100%;
+            height: 14px;
+            margin: 12px 0 8px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: rgba(148, 163, 184, 0.20);
+        }
+        .market-concentration-segment {
+            min-width: 2px;
+            height: 100%;
+        }
+        .market-intel-note {
+            display: flex;
+            align-items: center;
+            min-height: 84px;
+            color: rgba(170, 180, 194, 0.92);
+            font-size: 13px;
+            line-height: 1.4;
+            background: rgba(9, 14, 27, 0.52);
+        }
         h2, h3, label, .stMarkdown, .stSelectbox, .stTextInput, .stRadio {
             letter-spacing: 0 !important;
         }
@@ -1433,6 +1547,10 @@ def build_transaction_download_office_payload(
             "action_date",
             "action_type",
             "recipient_name",
+            "naics_code",
+            "naics_description",
+            "product_or_service_code",
+            "product_or_service_code_description",
             "awarding_office_code",
             "awarding_office_name",
             "funding_office_code",
@@ -1994,22 +2112,59 @@ def extract_code_description(value) -> tuple[str, str]:
 
 def transaction_naics_parts(item: dict) -> tuple[str, str]:
     code, description = extract_code_description(
-        first_present(item, ["NAICS", "naics", "naics_code", "naics_description"])
+        first_present(item, ["NAICS", "naics"])
     )
-    code = code or clean_office_value(first_present(item, ["NAICS Code", "naics_code"]))
+    code = code or clean_office_value(
+        first_present(item, ["NAICS Code", "naics_code", "naicsCode", "naics_code_current"])
+    )
     description = description or clean_office_value(
-        first_present(item, ["NAICS Description", "naics_description"])
+        first_present(
+            item,
+            [
+                "NAICS Description",
+                "naics_description",
+                "naics_description_current",
+                "NAICS Description Current",
+                "naics_desc",
+            ],
+        )
     )
     return code, description
 
 
 def transaction_psc_parts(item: dict) -> tuple[str, str]:
     code, description = extract_code_description(
-        first_present(item, ["PSC", "psc", "psc_code", "psc_description"])
+        first_present(
+            item,
+            [
+                "PSC",
+                "psc",
+            ],
+        )
     )
-    code = code or clean_office_value(first_present(item, ["PSC Code", "psc_code"]))
+    code = code or clean_office_value(
+        first_present(
+            item,
+            [
+                "PSC Code",
+                "psc_code",
+                "product_or_service_code",
+                "product_or_service_code_current",
+                "Product or Service Code",
+            ],
+        )
+    )
     description = description or clean_office_value(
-        first_present(item, ["PSC Description", "psc_description"])
+        first_present(
+            item,
+            [
+                "PSC Description",
+                "psc_description",
+                "product_or_service_code_description",
+                "product_or_service_code_description_current",
+                "Product or Service Code Description",
+            ],
+        )
     )
     return code, description
 
@@ -2132,18 +2287,31 @@ def classify_negative_obligation_signal(description: str) -> str:
 
 def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
     columns = [
+        "Raw Row Order",
+        "Contract Award Unique Key",
+        "Award ID",
         "Contractor Name",
         "Subagency / Bureau",
         "Mod",
+        "Transaction Number",
         "Obligation Amount",
+        "Current Award Value",
+        "Award Ceiling",
+        "NAICS Code",
+        "NAICS Description",
+        "PSC Code",
+        "PSC Description",
         "Action Date",
         "Action Code",
         "Action Type",
         "Contracting Office",
+        "Contracting Office Name",
+        "Funding Office",
+        "Funding Office Name",
         "Description",
     ]
     normalized_rows = []
-    for item in rows:
+    for row_order, item in enumerate(rows):
         if not isinstance(item, dict):
             continue
         amount = transaction_amount(item)
@@ -2173,8 +2341,13 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                 ["Action Type", "ActionType", "action_type", "action_type_code", "action_type_code_desc"],
             )
         )
+        naics_code, naics_description = transaction_naics_parts(item)
+        psc_code, psc_description = transaction_psc_parts(item)
         normalized_rows.append(
             {
+                "Raw Row Order": row_order,
+                "Contract Award Unique Key": award_unique_key(item),
+                "Award ID": clean_office_value(first_present(item, ["award_id_piid", "Award ID", "PIID"])),
                 "Contractor Name": first_present(
                     item,
                     [
@@ -2208,7 +2381,14 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                     ],
                 )
                 or "",
+                "Transaction Number": clean_office_value(item.get("transaction_number")),
                 "Obligation Amount": amount,
+                "Current Award Value": parse_currency_amount(item.get("current_total_value_of_award")),
+                "Award Ceiling": parse_currency_amount(item.get("potential_total_value_of_award")),
+                "NAICS Code": clean_office_value(naics_code) or "Unspecified",
+                "NAICS Description": clean_office_value(naics_description) or "Unspecified",
+                "PSC Code": clean_office_value(psc_code) or "Unspecified",
+                "PSC Description": clean_office_value(psc_description) or "Unspecified",
                 "Action Date": action_date,
                 "Action Code": action_code,
                 "Action Type": classify_cancellation_description(description)
@@ -2216,6 +2396,17 @@ def normalize_transaction_response(rows: list[dict]) -> pd.DataFrame:
                 "Contracting Office": format_contracting_office_option(transaction_contracting_office(item))
                 if transaction_contracting_office(item)
                 else "Unspecified Office",
+                "Contracting Office Name": clean_office_value(
+                    first_present(item, ["awarding_office_name", "Awarding Office Name"])
+                )
+                or "Unspecified Office",
+                "Funding Office": format_funding_office_option(transaction_funding_office(item))
+                if transaction_funding_office(item)
+                else "Unspecified Office",
+                "Funding Office Name": clean_office_value(
+                    first_present(item, ["funding_office_name", "Funding Office Name"])
+                )
+                or "Unspecified Office",
                 "Description": description,
             }
         )
@@ -3069,6 +3260,7 @@ def fetch_office_filtered_download_transactions(
         bureau_name,
         fiscal_year,
         market_filters=market_filters,
+        cache_version=cache_version,
     )
     market_filters = normalize_market_filters(market_filters)
     scoped_rows = [
@@ -3101,6 +3293,16 @@ def fetch_office_filtered_download_transactions(
     payload["transaction_download_rows_returned"] = len(rows)
     payload["transaction_count_returned"] = len(scoped_rows)
     payload["obligation_sum_returned"] = round(sum(transaction_amount(row) for row in scoped_rows), 2)
+    payload["transaction_lane_field_names_found"] = {
+        "naics": transaction_row_field_names_found(
+            scoped_rows,
+            NAICS_CODE_ALIASES + NAICS_DESCRIPTION_ALIASES,
+        ),
+        "psc": transaction_row_field_names_found(
+            scoped_rows,
+            PSC_CODE_ALIASES + PSC_DESCRIPTION_ALIASES,
+        ),
+    }
     payload["derived_office_options"] = transaction_office_filter_options(rows)
     df = normalize_transaction_response(scoped_rows)
     return df, payload, "Live USAspending.gov transaction download", None
@@ -3819,6 +4021,824 @@ def transaction_vendor_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
     return vendor_df.sort_values("amount", ascending=False).head(10)
 
 
+def market_concentration_summary(transaction_df: pd.DataFrame, total_obligations: float) -> tuple[dict, dict]:
+    empty_result = {
+        "value": "N/A",
+        "subtitle": "No contract obligations found for this scope.",
+        "supporting_text": "No contract obligations found for this scope.",
+        "classification": "",
+        "donut_slice_data": [],
+        "concentration_segments": [],
+        "grouped_contractor_count": 0,
+        "other_share_percentage": None,
+    }
+    if transaction_df.empty or "Obligation Amount" not in transaction_df.columns:
+        return empty_result, {
+            "total_obligations": round(float(total_obligations or 0.0), 2),
+            "grouped_contractor_count": 0,
+            "top_5_contractor_names": [],
+            "top_5_contractor_sums": [],
+            "top_5_sum": 0.0,
+            "other_contractor_sum": 0.0,
+            "concentration_percentage": None,
+            "donut_slice_data": [],
+            "concentration_segments": [],
+            "top_5_contractor_percentages": [],
+            "other_contractor_percentage": 0.0,
+            "total_segment_percentage": 0.0,
+            "reconciliation_status": False,
+        }
+
+    grouped = (
+        transaction_df.groupby("Contractor Name", as_index=False)["Obligation Amount"]
+        .sum()
+        .rename(columns={"Contractor Name": "contractor", "Obligation Amount": "amount"})
+    )
+    grouped = grouped[pd.to_numeric(grouped["amount"], errors="coerce").fillna(0).abs() >= 0.005]
+    grouped = grouped.sort_values("amount", ascending=False).reset_index(drop=True)
+    grouped_total = float(pd.to_numeric(grouped["amount"], errors="coerce").fillna(0).sum())
+    top_5 = grouped.head(5)
+    top_5_sum = float(pd.to_numeric(top_5["amount"], errors="coerce").fillna(0).sum())
+    total = float(total_obligations or 0.0)
+    other_sum = total - top_5_sum
+    reconciles = abs(grouped_total - total) <= 0.01
+    if not reconciles:
+        print("ERROR: Market concentration total does not reconcile to KPI.")
+    if total <= 0:
+        summary = empty_result
+        concentration_pct = None
+    else:
+        concentration_pct = (top_5_sum / total) * 100
+        if concentration_pct >= 70:
+            classification = "Highly concentrated market"
+        elif concentration_pct >= 40:
+            classification = "Moderately concentrated market"
+        else:
+            classification = "Fragmented market"
+        summary = {
+            "value": f"{concentration_pct:.1f}%",
+            "subtitle": "Top 5 contractor share",
+            "supporting_text": f"Top 5 contractors captured {concentration_pct:.1f}% of obligations in this scope.",
+            "classification": classification,
+        }
+        if len(grouped) == 1:
+            contractor_name = str(top_5.iloc[0].get("contractor") or "The only contractor")
+            summary["subtitle"] = "Single-vendor scope"
+            summary["supporting_text"] = f"{contractor_name} accounts for all obligations in this filtered market."
+    donut_slice_data = [
+        {
+            "contractor": str(row.get("contractor") or "Unknown Contractor"),
+            "amount": round(float(row.get("amount") or 0.0), 2),
+            "display_amount": format_money(row.get("amount")),
+        }
+        for row in top_5.to_dict("records")
+        if float(row.get("amount") or 0.0) > 0.005
+    ]
+    if other_sum > 0.005:
+        donut_slice_data.append(
+            {
+                "contractor": "All Other Contractors",
+                "amount": round(other_sum, 2),
+                "display_amount": format_money(other_sum),
+            }
+        )
+    concentration_segments = [
+        {
+            "contractor": row["contractor"],
+            "amount": row["amount"],
+            "display_amount": row["display_amount"],
+            "percentage": round((float(row["amount"] or 0.0) / total) * 100, 1) if total > 0 else 0.0,
+        }
+        for row in donut_slice_data
+        if row["contractor"] != "All Other Contractors"
+    ]
+    other_pct = round((max(other_sum, 0.0) / total) * 100, 1) if total > 0 else 0.0
+    if other_sum > 0.005:
+        concentration_segments.append(
+            {
+                "contractor": "All Other Contractors",
+                "amount": round(other_sum, 2),
+                "display_amount": format_money(other_sum),
+                "percentage": other_pct,
+            }
+        )
+    total_segment_pct = round(sum(float(row["percentage"] or 0.0) for row in concentration_segments), 1)
+    summary["donut_slice_data"] = donut_slice_data
+    summary["concentration_segments"] = concentration_segments
+    summary["grouped_contractor_count"] = int(len(grouped))
+    summary["other_share_percentage"] = other_pct if concentration_pct is not None else None
+    debug = {
+        "total_obligations": round(total, 2),
+        "grouped_contractor_count": int(len(grouped)),
+        "top_5_contractor_names": [str(row.get("contractor") or "") for row in top_5.to_dict("records")],
+        "top_5_contractor_sums": [
+            round(float(row.get("amount") or 0.0), 2) for row in top_5.to_dict("records")
+        ],
+        "top_5_contractor_percentages": [
+            round((float(row.get("amount") or 0.0) / total) * 100, 1) if total > 0 else 0.0
+            for row in top_5.to_dict("records")
+        ],
+        "top_5_sum": round(top_5_sum, 2),
+        "other_contractor_sum": round(other_sum, 2),
+        "other_contractor_percentage": other_pct,
+        "concentration_percentage": round(concentration_pct, 1) if concentration_pct is not None else None,
+        "donut_slice_data": donut_slice_data,
+        "concentration_segments": concentration_segments,
+        "total_segment_percentage": total_segment_pct,
+        "reconciliation_status": reconciles,
+    }
+    return summary, debug
+
+
+RAW_HTML_VISIBLE_TOKENS = ["<div", "</div>", "<span", "</span>", "class=", "style="]
+
+
+def visible_text_contains_raw_html(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(token in lowered for token in RAW_HTML_VISIBLE_TOKENS)
+
+
+def clean_visible_market_text(text: str) -> str:
+    cleaned = str(text or "")
+    for token in RAW_HTML_VISIBLE_TOKENS:
+        cleaned = re.sub(re.escape(token), "", cleaned, flags=re.IGNORECASE)
+    return cleaned.replace("<", "").replace(">", "")
+
+
+def render_market_concentration_legend(legend_lines: list[str]) -> None:
+    if not legend_lines:
+        return
+    safe_lines = []
+    for line in legend_lines:
+        if visible_text_contains_raw_html(line):
+            print("ERROR: raw HTML detected in Market Concentration legend text.")
+        safe_lines.append(clean_visible_market_text(line))
+    st.markdown("\n".join(f"- {line}" for line in safe_lines))
+
+
+def render_market_concentration_card(market_concentration: dict) -> None:
+    visible_text_values = [
+        str(market_concentration.get("value") or "N/A"),
+        str(market_concentration.get("subtitle") or "Top 5 contractor share"),
+        str(
+            market_concentration.get("supporting_text")
+            or market_concentration.get("subtitle")
+            or "No contract obligations found for this scope."
+        ),
+        str(market_concentration.get("classification") or ""),
+    ]
+    if any(visible_text_contains_raw_html(text) for text in visible_text_values):
+        print("ERROR: raw HTML detected in Market Concentration visible text.")
+    value = clean_visible_market_text(visible_text_values[0])
+    subtitle = clean_visible_market_text(visible_text_values[1])
+    supporting_text = clean_visible_market_text(
+        market_concentration.get("supporting_text")
+        or market_concentration.get("subtitle")
+        or "No contract obligations found for this scope."
+    )
+    classification = clean_visible_market_text(visible_text_values[3])
+    try:
+        top_share = float(value.replace("%", "")) if value != "N/A" else 0.0
+    except ValueError:
+        top_share = 0.0
+    top_share = min(max(top_share, 0.0), 100.0)
+    segments = market_concentration.get("concentration_segments") or []
+    colors = ["#2dd4bf", "#38bdf8", "#a78bfa", "#f59e0b", "#fb7185", "#64748b"]
+    segment_markup = ""
+    legend_lines = []
+    if value != "N/A" and segments:
+        segment_parts = []
+        for index, segment in enumerate(segments[:6]):
+            color = colors[index % len(colors)]
+            contractor = str(segment.get("contractor") or "Unknown Contractor")
+            amount = str(segment.get("display_amount") or format_money(segment.get("amount")))
+            percentage = float(segment.get("percentage") or 0.0)
+            title = f"{contractor}: {amount} ({percentage:.1f}% of scope)"
+            short_name = contractor if len(contractor) <= 42 else f"{contractor[:39].rstrip()}..."
+            segment_parts.append(
+                f'<div class="market-concentration-segment" style="width: {max(percentage, 0.0):.1f}%; '
+                f'background: {color};" title="{html.escape(title)}"></div>'
+            )
+            legend_lines.append(f"{short_name} — {percentage:.1f}% · {amount}")
+        segment_markup = (
+            '<div class="market-concentration-bar" aria-label="Market concentration by contractor">'
+            + "".join(segment_parts)
+            + "</div>"
+        )
+    st.markdown(
+        f"""
+        <section class="market-intel-card" style="--accent: #a78bfa;">
+            <div class="market-intel-label">Market Concentration</div>
+            <div class="market-intel-value">{html.escape(value)}</div>
+            <div class="market-intel-subtitle">{html.escape(subtitle)}</div>
+            {segment_markup}
+            <div class="market-intel-helper">{html.escape(supporting_text)}</div>
+            <div class="market-intel-helper">{html.escape(classification)}</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_market_concentration_legend(legend_lines)
+
+
+NAICS_CODE_ALIASES = [
+    "NAICS Code",
+    "naics_code",
+    "naics",
+    "NAICS",
+    "naicsCode",
+    "naics_code_current",
+]
+NAICS_DESCRIPTION_ALIASES = [
+    "NAICS Description",
+    "naics_description",
+    "naics_description_current",
+    "NAICS Description Current",
+    "naics_desc",
+]
+PSC_CODE_ALIASES = [
+    "PSC Code",
+    "product_or_service_code",
+    "product_or_service_code_current",
+    "psc_code",
+    "psc",
+    "PSC",
+    "Product or Service Code",
+]
+PSC_DESCRIPTION_ALIASES = [
+    "PSC Description",
+    "product_or_service_code_description",
+    "product_or_service_code_description_current",
+    "psc_description",
+    "Product or Service Code Description",
+]
+
+
+def dataframe_alias_columns_found(df: pd.DataFrame, aliases: list[str]) -> list[str]:
+    return [
+        alias
+        for alias in aliases
+        if alias in df.columns
+        and df[alias].apply(lambda value: clean_office_value(value) not in {"", "Unspecified"}).any()
+    ]
+
+
+def dataframe_first_non_null_lane_samples(
+    df: pd.DataFrame,
+    code_aliases: list[str],
+    description_aliases: list[str],
+    limit: int = 5,
+) -> list[dict]:
+    samples = []
+    for row in df.to_dict("records"):
+        code = clean_office_value(first_present(row, code_aliases))
+        description = clean_office_value(first_present(row, description_aliases))
+        if code and code != "Unspecified" or description and description != "Unspecified":
+            samples.append({"code": code, "description": description})
+        if len(samples) >= limit:
+            break
+    return samples
+
+
+def dataframe_lane_value(row: dict, aliases: list[str]) -> str:
+    return clean_office_value(first_present(row, aliases))
+
+
+def market_lane_mix_dataframe(
+    transaction_df: pd.DataFrame,
+    lane_kind: str,
+    total_obligations: float,
+    market_filters: dict | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    market_filters = normalize_market_filters(market_filters)
+    if lane_kind == "naics":
+        output_code_column = "NAICS"
+        code_aliases = NAICS_CODE_ALIASES
+        description_aliases = NAICS_DESCRIPTION_ALIASES
+        selected_code, selected_description = decode_option(market_filters["naics_code"])
+        selected_filter_active = bool(selected_code and selected_code != ALL_NAICS_CODES)
+        field_names_found_key = "transaction_row_naics_field_names_found"
+        candidates_found_key = "naics_column_candidates_found"
+        samples_key = "first_5_non_null_naics_values"
+    else:
+        output_code_column = "PSC"
+        code_aliases = PSC_CODE_ALIASES
+        description_aliases = PSC_DESCRIPTION_ALIASES
+        selected_code, selected_description = decode_option(market_filters["psc_code"])
+        selected_filter_active = bool(selected_code and selected_code != ALL_PRODUCT_SERVICE_CODES)
+        field_names_found_key = "transaction_row_psc_field_names_found"
+        candidates_found_key = "psc_column_candidates_found"
+        samples_key = "first_5_non_null_psc_values"
+    grouped_vs_kpi_key = f"grouped_{lane_kind}_total_vs_kpi"
+
+    columns = [
+        output_code_column,
+        "Description",
+        "Full Description",
+        "Obligated",
+        "% of Scope",
+        "Awards",
+        "Contractors",
+    ]
+    if transaction_df.empty:
+        return pd.DataFrame(columns=columns), {
+            "raw_transaction_rows_used": 0,
+            "grouped_row_count": 0,
+            "grouped_obligation_sum": 0.0,
+            "main_kpi_total": round(float(total_obligations or 0.0), 2),
+            "reconciliation_status": abs(float(total_obligations or 0.0)) <= 0.01,
+            field_names_found_key: [],
+            "transaction_df_columns": list(transaction_df.columns),
+            candidates_found_key: [],
+            samples_key: [],
+            "selected_filter_fallback_used": False,
+            grouped_vs_kpi_key: {
+                "grouped_obligation_sum": 0.0,
+                "main_kpi_total": round(float(total_obligations or 0.0), 2),
+                "difference": round(0.0 - float(total_obligations or 0.0), 2),
+            },
+        }
+
+    scoped_df = transaction_df.copy()
+    code_columns_found = dataframe_alias_columns_found(scoped_df, code_aliases)
+    description_columns_found = dataframe_alias_columns_found(scoped_df, description_aliases)
+    field_names_found = sorted(set(code_columns_found + description_columns_found))
+    sample_values = dataframe_first_non_null_lane_samples(scoped_df, code_aliases, description_aliases)
+    selected_filter_fallback_used = False
+
+    def lane_code_value(row: dict) -> str:
+        nonlocal selected_filter_fallback_used
+        code = dataframe_lane_value(row, code_aliases)
+        if code and code != "Unspecified":
+            return code
+        if selected_filter_active:
+            selected_filter_fallback_used = True
+            return clean_office_value(selected_code) or "Unspecified"
+        return "Unspecified"
+
+    def lane_description_value(row: dict) -> str:
+        nonlocal selected_filter_fallback_used
+        description = dataframe_lane_value(row, description_aliases)
+        if description and description != "Unspecified":
+            return description
+        if selected_filter_active:
+            selected_filter_fallback_used = True
+            return clean_office_value(selected_description) or clean_office_value(selected_code) or "Unspecified"
+        return "Unspecified"
+
+    lane_code_column = f"_{lane_kind}_lane_code"
+    lane_description_column = f"_{lane_kind}_lane_description"
+    scoped_df[lane_code_column] = [lane_code_value(row) for row in scoped_df.to_dict("records")]
+    scoped_df[lane_description_column] = [lane_description_value(row) for row in scoped_df.to_dict("records")]
+    scoped_df["_lane_award_key"] = scoped_df["Contract Award Unique Key"].apply(clean_office_value)
+    grouped = (
+        scoped_df.groupby([lane_code_column, lane_description_column], as_index=False)
+        .agg(
+            Obligated=("Obligation Amount", "sum"),
+            Awards=("_lane_award_key", lambda values: values.replace("", pd.NA).nunique(dropna=True)),
+            Contractors=("Contractor Name", "nunique"),
+        )
+        .rename(columns={lane_code_column: output_code_column, lane_description_column: "Full Description"})
+    )
+    total = float(total_obligations or 0.0)
+    grouped["% of Scope"] = grouped["Obligated"].apply(lambda amount: (float(amount or 0.0) / total) * 100 if total else 0.0)
+    grouped["Description"] = grouped["Full Description"].apply(truncate_award_description)
+    grouped = grouped.sort_values("Obligated", ascending=False).reset_index(drop=True)
+    grouped_total = float(pd.to_numeric(grouped["Obligated"], errors="coerce").fillna(0).sum())
+    debug = {
+        "raw_transaction_rows_used": int(len(scoped_df)),
+        "grouped_row_count": int(len(grouped)),
+        "grouped_obligation_sum": round(grouped_total, 2),
+        "main_kpi_total": round(total, 2),
+        "reconciliation_status": abs(grouped_total - total) <= 0.01,
+        field_names_found_key: field_names_found,
+        "transaction_df_columns": list(transaction_df.columns),
+        candidates_found_key: field_names_found,
+        samples_key: sample_values,
+        "selected_filter_fallback_used": selected_filter_fallback_used,
+        grouped_vs_kpi_key: {
+            "grouped_obligation_sum": round(grouped_total, 2),
+            "main_kpi_total": round(total, 2),
+            "difference": round(grouped_total - total, 2),
+        },
+    }
+    return grouped[columns], debug
+
+
+def render_market_lane_mix(
+    transaction_df: pd.DataFrame,
+    total_obligations: float,
+    market_filters: dict | None = None,
+    market_concentration: dict | None = None,
+) -> tuple[dict, dict]:
+    st.markdown('<div class="audit-heading">Market Intelligence</div>', unsafe_allow_html=True)
+    market_filters = normalize_market_filters(market_filters)
+    naics_df, naics_debug = market_lane_mix_dataframe(transaction_df, "naics", total_obligations, market_filters)
+    psc_df, psc_debug = market_lane_mix_dataframe(transaction_df, "psc", total_obligations, market_filters)
+    market_concentration = market_concentration or {
+        "value": "N/A",
+        "subtitle": "No contract obligations found for this scope.",
+        "classification": "",
+    }
+
+    def top_lane_summary(
+        df: pd.DataFrame,
+        code_column: str,
+        empty_title: str,
+        selected_filter_active: bool,
+        unavailable_message: str,
+    ) -> dict:
+        if df.empty:
+            return {
+                "label": empty_title,
+                "value": "N/A",
+                "subtitle": "No prime contract obligations found.",
+                "helper": "",
+                "meaningful": False,
+                "note": unavailable_message,
+            }
+        top_row = df.iloc[0]
+        code = clean_office_value(top_row.get(code_column)) or "Unspecified"
+        description = clean_office_value(top_row.get("Full Description")) or "Unspecified"
+        obligated = format_money(top_row.get("Obligated"))
+        pct = f"{float(top_row.get('% of Scope') or 0.0):.1f}%"
+        is_unfiltered_unspecified = (
+            not selected_filter_active
+            and code == "Unspecified"
+            and description == "Unspecified"
+            and float(top_row.get("% of Scope") or 0.0) >= 99.95
+        )
+        return {
+            "label": empty_title,
+            "value": code,
+            "subtitle": f"{obligated} · {pct} of scope",
+            "helper": description,
+            "meaningful": not is_unfiltered_unspecified,
+            "note": unavailable_message if is_unfiltered_unspecified else "",
+        }
+
+    selected_naics_code, _selected_naics_description = decode_option(market_filters["naics_code"])
+    selected_psc_code, _selected_psc_description = decode_option(market_filters["psc_code"])
+    naics_summary = top_lane_summary(
+        naics_df,
+        "NAICS",
+        "Top NAICS",
+        bool(selected_naics_code and selected_naics_code != ALL_NAICS_CODES),
+        "NAICS mix unavailable from returned transaction rows for this scope.",
+    )
+    psc_summary = top_lane_summary(
+        psc_df,
+        "PSC",
+        "Top PSC",
+        bool(selected_psc_code and selected_psc_code != ALL_PRODUCT_SERVICE_CODES),
+        "PSC mix unavailable from returned transaction rows for this scope.",
+    )
+
+    def render_lane_summary(summary: dict, accent: str) -> None:
+        if not summary.get("meaningful"):
+            st.markdown(
+                f"""
+                <section class="market-intel-note">
+                    {html.escape(str(summary.get("note") or "Lane mix unavailable from returned transaction rows for this scope."))}
+                </section>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+        metric_card(
+            summary["label"],
+            summary["value"],
+            summary["subtitle"],
+            accent,
+            helper_text=summary["helper"],
+        )
+
+    intelligence_cols = st.columns(3)
+    with intelligence_cols[0]:
+        render_market_concentration_card(market_concentration)
+    with intelligence_cols[1]:
+        render_lane_summary(naics_summary, "#38bdf8")
+    with intelligence_cols[2]:
+        render_lane_summary(psc_summary, "#2dd4bf")
+
+    if transaction_df.empty:
+        st.info("No NAICS or PSC mix available because this scope has no prime contract obligations.")
+        return naics_debug, psc_debug
+
+    def display_lane_table(df: pd.DataFrame, title: str) -> None:
+        st.markdown(f"**{title}**")
+        display_df = df.head(10).copy()
+        display_df["Obligated"] = display_df["Obligated"].apply(format_money)
+        display_df["% of Scope"] = display_df["% of Scope"].apply(lambda value: f"{float(value or 0.0):.1f}%")
+        display_df = display_df.drop(columns=["Full Description"])
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Description": st.column_config.TextColumn(width="large"),
+                "Obligated": st.column_config.TextColumn(width="small"),
+                "% of Scope": st.column_config.TextColumn(width="small"),
+                "Awards": st.column_config.NumberColumn(width="small"),
+                "Contractors": st.column_config.NumberColumn(width="small"),
+            },
+        )
+
+    with st.expander("View Market Lane Mix", expanded=False):
+        mix_cols = st.columns(2)
+        with mix_cols[0]:
+            display_lane_table(naics_df, "Top NAICS by Obligations")
+        with mix_cols[1]:
+            display_lane_table(psc_df, "Top PSC by Obligations")
+    return naics_debug, psc_debug
+
+
+def usaspending_award_url(contract_award_unique_key: str) -> str:
+    award_key = clean_office_value(contract_award_unique_key)
+    if not award_key:
+        return ""
+    return f"https://www.usaspending.gov/award/{quote(award_key, safe='_')}"
+
+
+def award_drilldown_dataframe(transaction_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    columns = [
+        "Contractor",
+        "Award ID",
+        "Full Award Description",
+        "Obligations This Period",
+        "Current Award Value",
+        "Award Ceiling",
+        "Remaining Ceiling",
+        "Contracting Office",
+        "Funding Office",
+        "Action Date",
+        "contract_award_unique_key",
+        "USAspending",
+    ]
+    if transaction_df.empty:
+        return pd.DataFrame(columns=columns), {
+            "raw_transaction_rows_used": 0,
+            "grouped_award_count": 0,
+            "total_grouped_award_obligation_sum": 0.0,
+            "sample_generated_usaspending_links": [],
+        }
+
+    scoped_df = transaction_df.copy()
+    grouped_awards: dict[tuple[str, str], list[dict]] = {}
+    for row_order, row in enumerate(scoped_df.to_dict("records")):
+        award_key = clean_office_value(row.get("Contract Award Unique Key"))
+        award_id = clean_office_value(row.get("Award ID"))
+        group_key = ("contract_award_unique_key", award_key) if award_key else ("missing_contract_award_unique_key", award_id or str(row_order))
+        row["_award_drilldown_row_order"] = int(row.get("Raw Row Order") or row_order)
+        grouped_awards.setdefault(group_key, []).append(row)
+
+    award_rows = []
+    for (_key_type, award_key), award_rows_for_key in grouped_awards.items():
+        latest_row = sorted(
+            award_rows_for_key,
+            key=lambda row: (
+                parse_action_date(row.get("Action Date")) or date.min,
+                award_sequence_value(
+                    {
+                        "modification_number": row.get("Mod"),
+                        "transaction_number": row.get("Transaction Number"),
+                    }
+                ),
+                int(row.get("_award_drilldown_row_order") or 0),
+            ),
+        )[-1]
+        obligations_this_period = sum(
+            parse_currency_amount(row.get("Obligation Amount")) for row in award_rows_for_key
+        )
+        current_award_value = parse_currency_amount(latest_row.get("Current Award Value"))
+        award_ceiling = parse_currency_amount(latest_row.get("Award Ceiling"))
+        remaining_ceiling = max(award_ceiling - current_award_value, 0.0)
+        award_url = usaspending_award_url(latest_row.get("Contract Award Unique Key"))
+        award_rows.append(
+            {
+                "Contractor": clean_office_value(latest_row.get("Contractor Name")) or "Unknown Contractor",
+                "Award ID": clean_office_value(latest_row.get("Award ID")) or "Unavailable",
+                "Full Award Description": clean_office_value(latest_row.get("Description")),
+                "Obligations This Period": obligations_this_period,
+                "Current Award Value": current_award_value,
+                "Award Ceiling": award_ceiling,
+                "Remaining Ceiling": remaining_ceiling,
+                "Contracting Office": clean_office_value(latest_row.get("Contracting Office Name"))
+                or clean_office_value(latest_row.get("Contracting Office")),
+                "Funding Office": clean_office_value(latest_row.get("Funding Office Name"))
+                or clean_office_value(latest_row.get("Funding Office")),
+                "Action Date": latest_row.get("Action Date"),
+                "contract_award_unique_key": clean_office_value(latest_row.get("Contract Award Unique Key")),
+                "USAspending": award_url or None,
+            }
+        )
+
+    award_df = pd.DataFrame(award_rows, columns=columns)
+    if not award_df.empty:
+        award_df = award_df.sort_values("Obligations This Period", ascending=False).reset_index(drop=True)
+    grouped_total = (
+        float(pd.to_numeric(award_df["Obligations This Period"], errors="coerce").fillna(0).sum())
+        if not award_df.empty
+        else 0.0
+    )
+    sample_links = [
+        {
+            "award_id": str(row.get("Award ID") or ""),
+            "url": str(row.get("USAspending") or ""),
+        }
+        for row in award_df[award_df["USAspending"].notna()].head(5).to_dict("records")
+    ]
+    return award_df, {
+        "raw_transaction_rows_used": int(len(scoped_df)),
+        "grouped_award_count": int(len(award_df)),
+        "total_grouped_award_obligation_sum": round(grouped_total, 2),
+        "sample_generated_usaspending_links": sample_links,
+    }
+
+
+def truncate_award_description(description: str, limit: int = 125) -> str:
+    text = clean_office_value(description)
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def sorted_award_drilldown_dataframe(award_df: pd.DataFrame, rank_by: str) -> pd.DataFrame:
+    if award_df.empty:
+        return award_df.copy()
+    sort_config = {
+        "Obligations This Period": ("Obligations This Period", date.min),
+        "Current Award Value": ("Current Award Value", 0.0),
+        "Award Ceiling": ("Award Ceiling", 0.0),
+        "Remaining Ceiling": ("Remaining Ceiling", 0.0),
+        "Most Recent Action": ("Action Date", date.min),
+    }
+    sort_column, fill_value = sort_config.get(rank_by, sort_config["Obligations This Period"])
+    sortable_df = award_df.copy()
+    if sort_column == "Action Date":
+        sortable_df["_award_drilldown_sort"] = sortable_df[sort_column].apply(
+            lambda value: parse_action_date(value) or date.min
+        )
+    else:
+        sortable_df["_award_drilldown_sort"] = pd.to_numeric(
+            sortable_df[sort_column], errors="coerce"
+        ).fillna(fill_value)
+    return (
+        sortable_df.sort_values("_award_drilldown_sort", ascending=False)
+        .drop(columns=["_award_drilldown_sort"])
+        .reset_index(drop=True)
+    )
+
+
+def award_drilldown_csv_bytes(award_df: pd.DataFrame) -> bytes:
+    export_columns = [
+        "Contractor",
+        "Award ID",
+        "Full Award Description",
+        "Obligations This Period",
+        "Current Award Value",
+        "Award Ceiling",
+        "Remaining Ceiling",
+        "Contracting Office",
+        "Funding Office",
+        "Action Date",
+        "contract_award_unique_key",
+        "USAspending URL",
+    ]
+    export_df = award_df.copy()
+    if "Action Date" in export_df.columns:
+        export_df["Action Date"] = export_df["Action Date"].apply(
+            lambda value: value.isoformat() if isinstance(value, date) else clean_office_value(value)
+        )
+    export_df = export_df.rename(columns={"USAspending": "USAspending URL"})
+    return export_df[export_columns].to_csv(index=False).encode("utf-8")
+
+
+def render_award_drilldown_html_table(visible_df: pd.DataFrame) -> None:
+    headers = [
+        "Contractor",
+        "Award ID",
+        "Description",
+        "Obligated",
+        "Current Value",
+        "Ceiling",
+        "Remaining",
+        "Contracting Office",
+        "Funding Office",
+        "Date",
+    ]
+    rows_markup = []
+    for row in visible_df.to_dict("records"):
+        award_id = clean_office_value(row.get("Award ID")) or "Unavailable"
+        award_url = clean_office_value(row.get("USAspending"))
+        if award_url:
+            award_id_markup = (
+                f'<a href="{html.escape(award_url)}" target="_blank" rel="noopener noreferrer">'
+                f"{html.escape(award_id)} &#8599;</a>"
+            )
+        else:
+            award_id_markup = html.escape(award_id)
+        action_date = row.get("Action Date")
+        action_date_text = action_date.isoformat() if isinstance(action_date, date) else clean_office_value(action_date)
+        description = clean_office_value(row.get("Full Award Description"))
+        row_values = [
+            html.escape(clean_office_value(row.get("Contractor"))),
+            award_id_markup,
+            (
+                f'<span title="{html.escape(description)}">'
+                f"{html.escape(truncate_award_description(description))}</span>"
+            ),
+            html.escape(format_full_money(row.get("Obligations This Period"))),
+            html.escape(format_full_money(row.get("Current Award Value"))),
+            html.escape(format_full_money(row.get("Award Ceiling"))),
+            html.escape(format_full_money(row.get("Remaining Ceiling"))),
+            f'<span title="{html.escape(clean_office_value(row.get("Contracting Office")))}">{html.escape(clean_office_value(row.get("Contracting Office")))}</span>',
+            f'<span title="{html.escape(clean_office_value(row.get("Funding Office")))}">{html.escape(clean_office_value(row.get("Funding Office")))}</span>',
+            html.escape(action_date_text),
+        ]
+        cells = "".join(f"<td>{value}</td>" for value in row_values)
+        rows_markup.append(f"<tr>{cells}</tr>")
+
+    header_markup = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    body_markup = "".join(rows_markup)
+    st.markdown(
+        f"""
+        <div class="award-drilldown-table-wrap">
+            <table class="award-drilldown-table">
+                <thead><tr>{header_markup}</tr></thead>
+                <tbody>{body_markup}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_top_awards_drilldown(award_df: pd.DataFrame, scope_key: str) -> dict:
+    st.markdown('<div class="audit-heading">Top Awards in This Market</div>', unsafe_allow_html=True)
+    if award_df.empty:
+        st.info("No contract awards found for this selected market scope.")
+        return {"displayed_award_count": 0, "row_count_selection": "Top 25", "rank_by": "Obligations This Period"}
+
+    rank_options = [
+        "Obligations This Period",
+        "Current Award Value",
+        "Award Ceiling",
+        "Remaining Ceiling",
+        "Most Recent Action",
+    ]
+    control_cols = st.columns([1, 1, 1.4])
+    with control_cols[0]:
+        row_count_label = st.selectbox(
+            "Rows",
+            ["Top 25", "Top 100", "All"],
+            index=0,
+            key=f"award-drilldown-row-count-{scope_key}",
+        )
+    with control_cols[1]:
+        rank_by = st.selectbox(
+            "Rank awards by",
+            rank_options,
+            index=0,
+            key=f"award-drilldown-rank-by-{scope_key}",
+        )
+    sorted_df = sorted_award_drilldown_dataframe(award_df, rank_by)
+    total_unique_awards = int(len(sorted_df))
+    if row_count_label == "Top 25":
+        visible_df = sorted_df.head(25)
+    elif row_count_label == "Top 100":
+        visible_df = sorted_df.head(100)
+    else:
+        visible_df = sorted_df
+        if total_unique_awards > 1_000:
+            st.warning(
+                f"This market has {total_unique_awards:,} awards. Showing all rows may be slow. "
+                "Consider downloading the CSV instead."
+            )
+    visible_count = int(len(visible_df))
+    total_obligations = float(
+        pd.to_numeric(award_df["Obligations This Period"], errors="coerce").fillna(0).sum()
+    )
+    st.caption(
+        f"Showing top {visible_count:,} of {total_unique_awards:,} unique awards "
+        f"\u00b7 {format_money(total_obligations)} obligated in this scope"
+    )
+    with control_cols[2]:
+        st.download_button(
+            "Download All Awards CSV",
+            data=award_drilldown_csv_bytes(sorted_df),
+            file_name="top_awards_in_this_market.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    render_award_drilldown_html_table(visible_df)
+    return {
+        "displayed_award_count": visible_count,
+        "row_count_selection": row_count_label,
+        "rank_by": rank_by,
+    }
+
+
 def active_refine_filter_application_debug(
     payload: dict,
     market_filters: dict | None,
@@ -3940,6 +4960,17 @@ def normalize_award_scope_download_rows(rows: list[dict]) -> list[dict]:
 
 def non_empty_field_count(rows: list[dict], key: str) -> int:
     return sum(1 for row in rows if clean_office_value(row.get(key)))
+
+
+def transaction_row_field_names_found(rows: list[dict], aliases: list[str]) -> list[str]:
+    found = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for alias in aliases:
+            if alias in row and clean_office_value(row.get(alias)):
+                found.add(alias)
+    return sorted(found)
 
 
 def award_unique_key(item: dict) -> str:
@@ -4444,6 +5475,7 @@ def render_refine_market_selectors(
             selected_bureau,
             int(selected_year),
             market_filters=active_market_filters,
+            cache_version=APP_CACHE_VERSION,
         )
 
     downloaded_contracting_set = scoped_office_option_set(
@@ -4863,6 +5895,7 @@ def render_analysis_dashboard(
                 clear_active_refinements()
                 st.rerun()
 
+    market_concentration, market_concentration_debug = market_concentration_summary(transaction_df, current_total)
     metric_cols = st.columns(3)
     with metric_cols[0]:
         metric_card(
@@ -4918,6 +5951,17 @@ def render_analysis_dashboard(
             "Award Ceiling minus Current Award Value",
             "#f59e0b",
         )
+
+    market_lane_naics_debug, market_lane_psc_debug = render_market_lane_mix(
+        transaction_df,
+        current_total,
+        selected_market_filters,
+        market_concentration,
+    )
+    lane_field_names_found = transaction_payload.get("transaction_lane_field_names_found", {})
+    if lane_field_names_found:
+        market_lane_naics_debug["transaction_row_naics_field_names_found"] = lane_field_names_found.get("naics", [])
+        market_lane_psc_debug["transaction_row_psc_field_names_found"] = lane_field_names_found.get("psc", [])
 
     with st.expander("Award Scope Diagnostic Probe"):
         st.caption("Runs the same award-scope function as the dashboard for NASA FY2026, bypassing cached rows.")
@@ -5043,6 +6087,30 @@ def render_analysis_dashboard(
                 config={"responsive": True, "displayModeBar": False},
             )
 
+    award_drilldown_df, award_drilldown_debug = award_drilldown_dataframe(transaction_df)
+    award_drilldown_total = float(award_drilldown_debug.get("total_grouped_award_obligation_sum") or 0.0)
+    award_drilldown_reconciles = abs(award_drilldown_total - float(current_total or 0.0)) <= 0.01
+    award_drilldown_debug.update(
+        {
+            "main_kpi_obligation_sum": round(float(current_total or 0.0), 2),
+            "grouped_sum_reconciles_to_kpi": award_drilldown_reconciles,
+        }
+    )
+    if not award_drilldown_reconciles:
+        print("ERROR: award drilldown obligation total does not reconcile to KPI.")
+    award_drilldown_debug.update(
+        render_top_awards_drilldown(
+            award_drilldown_df,
+            time_grain_scope_key(
+                active_agency,
+                selected_bureau,
+                int(selected_year),
+                selected_contracting_office,
+                selected_market_filters,
+            ),
+        )
+    )
+
     if transaction_error:
         st.error("Analysis could not complete for this scope. Try clearing refinements or running a broader agency-level query.")
     derived_office_options = transaction_payload.get("derived_office_options")
@@ -5142,6 +6210,12 @@ def render_analysis_dashboard(
             selected_bureau,
             top_tier_fallback_used="top-tier fallback" in vendor_source.lower(),
         ),
+        "award_drilldown": attach_component_scope_debug(
+            transaction_payload,
+            "award_drilldown",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in transaction_source.lower(),
+        ),
         "award_scope": attach_component_scope_debug(
             award_scope_payload,
             "award_scope",
@@ -5198,6 +6272,12 @@ def render_analysis_dashboard(
         "subagency_was_ui_only_not_applicable": bureau_is_ui_only_not_applicable(selected_bureau),
         "component_scope_debug": component_scope_debug,
         "fallback_violations": fallback_violations,
+        "market_concentration": market_concentration_debug,
+        "market_lane_mix": {
+            "naics": market_lane_naics_debug,
+            "psc": market_lane_psc_debug,
+        },
+        "award_drilldown": award_drilldown_debug,
         "leaderboard_reconciliation": {
             "active_filter_payload": active_scope_payload,
             "transaction_row_count_used_by_kpi": int(len(transaction_df)),
