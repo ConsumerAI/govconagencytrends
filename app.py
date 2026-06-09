@@ -2255,6 +2255,73 @@ def bureau_filter_active(bureau_name: str | None) -> bool:
     return resolve_bureau_filter_name(bureau_name) is not None
 
 
+def subagency_scope_kind(bureau_name: str | None) -> str:
+    if bureau_is_ui_only_not_applicable(bureau_name):
+        return "not_applicable"
+    return "explicit" if bureau_filter_active(bureau_name) else "all_bureaus"
+
+
+def payload_agency_filters(payload: dict | None) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    return filters.get("agencies") or []
+
+
+def explicit_subagency_used_top_tier(payload: dict | None, selected_bureau: str | None) -> bool:
+    if subagency_scope_kind(selected_bureau) != "explicit":
+        return False
+    return any(
+        isinstance(agency, dict)
+        and agency.get("type") == "awarding"
+        and agency.get("tier") == "toptier"
+        for agency in payload_agency_filters(payload)
+    )
+
+
+def component_scope_debug(
+    component_name: str,
+    payload: dict | None,
+    selected_bureau: str | None,
+    top_tier_fallback_used: bool = False,
+) -> dict:
+    selected_label = canonical_bureau_name(selected_bureau)
+    fallback_violation = explicit_subagency_used_top_tier(payload, selected_bureau) or (
+        subagency_scope_kind(selected_bureau) == "explicit" and top_tier_fallback_used
+    )
+    return {
+        "component": component_name,
+        "selected_subagency_label": selected_label,
+        "subagency_scope": subagency_scope_kind(selected_bureau),
+        "top_tier_fallback_used": bool(top_tier_fallback_used),
+        "final_agency_filter_sent": payload_agency_filters(payload),
+        "fallback_violation": fallback_violation,
+        "log_message": "ERROR: explicit subagency selected but component used top-tier fallback"
+        if fallback_violation
+        else "",
+    }
+
+
+def attach_component_scope_debug(
+    payload: dict,
+    component_name: str,
+    selected_bureau: str | None,
+    top_tier_fallback_used: bool = False,
+) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    payload.setdefault("component_scope_debug", {})
+    payload["component_scope_debug"][component_name] = component_scope_debug(
+        component_name,
+        payload,
+        selected_bureau,
+        top_tier_fallback_used=top_tier_fallback_used,
+    )
+    if payload["component_scope_debug"][component_name]["fallback_violation"]:
+        print("ERROR: explicit subagency selected but component used top-tier fallback")
+    return payload
+
+
 def dataframe_has_spend(df: pd.DataFrame, amount_column: str) -> bool:
     if df.empty or amount_column not in df.columns:
         return False
@@ -2313,22 +2380,8 @@ def fetch_trends(
     data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
     if data:
         df = normalize_trend_response(data)
-        if dataframe_has_spend(df, "amount"):
+        if not df.empty:
             return df, payload, "Live USAspending.gov", None
-
-    if bureau_filter_active(bureau_name):
-        fallback_payload = build_trends_payload(agency_name, None, market_filters=market_filters)
-        fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_over_time/", fallback_payload)
-        if fallback_data:
-            fallback_df = normalize_trend_response(fallback_data)
-            if dataframe_has_spend(fallback_df, "amount"):
-                return fallback_df, fallback_payload, "Live USAspending.gov (top-tier fallback)", None
-        return (
-            pd.DataFrame(columns=["fiscal_year", "amount"]),
-            fallback_payload,
-            "USAspending.gov error",
-            fallback_error or error or "No trend rows returned",
-        )
 
     return pd.DataFrame(columns=["fiscal_year", "amount"]), payload, "USAspending.gov error", error or "No trend rows returned"
 
@@ -2375,31 +2428,8 @@ def fetch_obligations_time_series(
     data, error = post_usaspending("/api/v2/search/spending_over_time/", payload)
     if data:
         df = normalize_obligation_time_series_response(data, time_grain)
-        if dataframe_has_spend(df, "amount"):
+        if not df.empty:
             return df, payload, "Live USAspending.gov", None
-
-    if bureau_filter_active(bureau_name):
-        fallback_payload = build_obligations_time_series_payload(
-            agency_name,
-            None,
-            selected_year,
-            time_grain,
-            market_filters=market_filters,
-        )
-        fallback_data, fallback_error = post_usaspending(
-            "/api/v2/search/spending_over_time/",
-            fallback_payload,
-        )
-        if fallback_data:
-            fallback_df = normalize_obligation_time_series_response(fallback_data, time_grain)
-            if dataframe_has_spend(fallback_df, "amount"):
-                return fallback_df, fallback_payload, "Live USAspending.gov (top-tier fallback)", None
-        return (
-            pd.DataFrame(columns=["bucket_label", "amount", "transaction_count"]),
-            fallback_payload,
-            "USAspending.gov error",
-            fallback_error or error or "No obligation time-series rows returned",
-        )
 
     return (
         pd.DataFrame(columns=["bucket_label", "amount", "transaction_count"]),
@@ -2420,34 +2450,12 @@ def fetch_vendors(
     data, error = post_usaspending("/api/v2/search/spending_by_category/recipient/", payload)
     if data:
         df, contractor_count = normalize_vendor_response(data)
-        if dataframe_has_spend(df, "amount"):
-            return (
-                df,
-                contractor_count or len(df["recipient"].unique()),
-                payload,
-                "Live USAspending.gov",
-                None,
-            )
-
-    if bureau_filter_active(bureau_name):
-        fallback_payload = build_vendor_payload(agency_name, None, market_filters)
-        fallback_data, fallback_error = post_usaspending("/api/v2/search/spending_by_category/recipient/", fallback_payload)
-        if fallback_data:
-            fallback_df, fallback_contractor_count = normalize_vendor_response(fallback_data)
-            if dataframe_has_spend(fallback_df, "amount"):
-                return (
-                    fallback_df,
-                    fallback_contractor_count or len(fallback_df["recipient"].unique()),
-                    fallback_payload,
-                    "Live USAspending.gov (top-tier fallback)",
-                    None,
-                )
         return (
-            pd.DataFrame(columns=["recipient", "amount"]),
-            0,
-            fallback_payload,
-            "USAspending.gov error",
-            fallback_error or error or "No vendor rows returned",
+            df,
+            contractor_count or (len(df["recipient"].unique()) if "recipient" in df.columns else 0),
+            payload,
+            "Live USAspending.gov",
+            None,
         )
 
     return pd.DataFrame(columns=["recipient", "amount"]), 0, payload, "USAspending.gov error", error or "No vendor rows returned"
@@ -2559,7 +2567,7 @@ def fetch_transactions(
         progress_text = st.empty()
 
     try:
-        master_rows, payload_log, first_error, records_seen, obligation_magnitude = fetch_transaction_pages(
+        master_rows, payload_log, first_error, _records_seen, _obligation_magnitude = fetch_transaction_pages(
             agency_name,
             bureau_name,
             start_date,
@@ -2571,39 +2579,6 @@ def fetch_transactions(
         )
         transaction_df = normalize_transaction_response(master_rows)
         payload_log["derived_office_options"] = transaction_office_filter_options(master_rows)
-
-        if (
-            bureau_filter_active(bureau_name)
-            and (not contracting_office or contracting_office == ALL_CONTRACTING_OFFICES)
-            and (records_seen == 0 or obligation_magnitude == 0)
-        ):
-            (
-                fallback_rows,
-                fallback_payload,
-                fallback_error,
-                fallback_records_seen,
-                fallback_obligation_magnitude,
-            ) = fetch_transaction_pages(
-                agency_name,
-                None,
-                start_date,
-                end_date,
-                progress_text,
-                contracting_office=contracting_office,
-                include_positive=include_positive,
-                market_filters=market_filters,
-            )
-            fallback_df = normalize_transaction_response(fallback_rows)
-            fallback_payload["derived_office_options"] = transaction_office_filter_options(fallback_rows)
-            if fallback_records_seen > 0 and fallback_obligation_magnitude > 0:
-                fallback_source = "Live USAspending.gov (top-tier fallback)" if fallback_error is None else "Partial USAspending.gov (top-tier fallback)"
-                return fallback_df, fallback_payload, fallback_source, fallback_error
-            return (
-                fallback_df,
-                fallback_payload,
-                "USAspending.gov error",
-                fallback_error or first_error or "No transaction rows returned",
-            )
     finally:
         progress_text.empty()
 
@@ -2622,7 +2597,7 @@ def fetch_transactions_cached(
     cache_version: str = APP_CACHE_VERSION,
 ) -> tuple[pd.DataFrame, dict, str, str | None]:
     start_date, end_date = fiscal_year_date_range(fiscal_year)
-    master_rows, payload_log, first_error, records_seen, obligation_magnitude = fetch_transaction_pages(
+    master_rows, payload_log, first_error, _records_seen, _obligation_magnitude = fetch_transaction_pages(
         agency_name,
         bureau_name,
         start_date,
@@ -2634,43 +2609,6 @@ def fetch_transactions_cached(
     )
     transaction_df = normalize_transaction_response(master_rows)
     payload_log["derived_office_options"] = transaction_office_filter_options(master_rows)
-
-    if (
-        bureau_filter_active(bureau_name)
-        and (not contracting_office or contracting_office == ALL_CONTRACTING_OFFICES)
-        and (records_seen == 0 or obligation_magnitude == 0)
-    ):
-        (
-            fallback_rows,
-            fallback_payload,
-            fallback_error,
-            fallback_records_seen,
-            fallback_obligation_magnitude,
-        ) = fetch_transaction_pages(
-            agency_name,
-            None,
-            start_date,
-            end_date,
-            progress_text=None,
-            contracting_office=contracting_office,
-            include_positive=include_positive,
-            market_filters=market_filters,
-        )
-        fallback_df = normalize_transaction_response(fallback_rows)
-        fallback_payload["derived_office_options"] = transaction_office_filter_options(fallback_rows)
-        if fallback_records_seen > 0 and fallback_obligation_magnitude > 0:
-            fallback_source = (
-                "Live USAspending.gov (top-tier fallback)"
-                if fallback_error is None
-                else "Partial USAspending.gov (top-tier fallback)"
-            )
-            return fallback_df, fallback_payload, fallback_source, fallback_error
-        return (
-            fallback_df,
-            fallback_payload,
-            "USAspending.gov error",
-            fallback_error or first_error or "No transaction rows returned",
-        )
 
     source = "Live USAspending.gov" if first_error is None else "Partial USAspending.gov"
     return transaction_df, payload_log, source, first_error
@@ -3063,6 +3001,9 @@ def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[lis
     diagnostic["first_3_parsed_rows"] = rows[:3]
     diagnostic["elapsed_seconds"] = round(time.monotonic() - start_time, 2)
     if not rows:
+        if diagnostic["exact_csv_headers_returned"]:
+            diagnostic["zero_result_state"] = True
+            return [], diagnostic, None
         diagnostic["failure_mode"] = "download_file_empty"
         return [], diagnostic, "download_file_empty"
     return rows, diagnostic, None
@@ -3227,27 +3168,27 @@ def fetch_award_scope_from_download(
     award_df, award_debug = award_scope_dataframe(scoped_rows)
     award_totals = award_scope_totals(award_df)
     returned_columns = list(raw_rows[0].keys()) if raw_rows else []
-    missing_required_columns = [
-        canonical_key
-        for canonical_key in [
-            "contract_award_unique_key",
-            "potential_total_value_of_award",
-            "current_total_value_of_award",
-            "total_dollars_obligated",
-            "total_outlayed_amount_for_overall_award",
-            "action_date",
-            "recipient_name",
+    missing_required_columns = []
+    if rows:
+        missing_required_columns = [
+            canonical_key
+            for canonical_key in [
+                "contract_award_unique_key",
+                "potential_total_value_of_award",
+                "current_total_value_of_award",
+                "total_dollars_obligated",
+                "total_outlayed_amount_for_overall_award",
+                "action_date",
+                "recipient_name",
+            ]
+            if non_empty_field_count(rows, canonical_key) == 0
         ]
-        if non_empty_field_count(rows, canonical_key) == 0
-    ]
     if cache_diagnostic["cache_returned_empty_result"]:
         failure_mode = "cache_returned_empty_result"
     elif download_failure_mode:
         failure_mode = download_failure_mode
     elif missing_required_columns:
         failure_mode = "missing_required_columns"
-    elif raw_rows and not scoped_rows:
-        failure_mode = "zero_rows_after_filtering"
     elif scoped_rows and award_df.empty:
         failure_mode = "zero_unique_award_keys_after_dedupe"
     else:
@@ -3873,10 +3814,66 @@ def transaction_vendor_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
         transaction_df.groupby("Contractor Name", as_index=False)["Obligation Amount"]
         .sum()
         .rename(columns={"Contractor Name": "recipient", "Obligation Amount": "amount"})
-        .sort_values("amount", ascending=False)
-        .head(10)
     )
-    return vendor_df
+    vendor_df = vendor_df[pd.to_numeric(vendor_df["amount"], errors="coerce").fillna(0).abs() >= 0.005]
+    return vendor_df.sort_values("amount", ascending=False).head(10)
+
+
+def active_refine_filter_application_debug(
+    payload: dict,
+    market_filters: dict | None,
+    contracting_office: str | None,
+) -> dict:
+    market_filters = normalize_market_filters(market_filters)
+    filters = payload.get("filters", {}) if isinstance(payload, dict) else {}
+    client_side_filter = payload.get("client_side_filter", {}) if isinstance(payload, dict) else {}
+    naics_code, _naics_label = decode_option(market_filters["naics_code"])
+    contract_type_code, _contract_type_label = decode_option(market_filters["contract_type"])
+    psc_code, _psc_label = decode_option(market_filters["psc_code"])
+    set_aside_code, _set_aside_label = decode_option(market_filters["set_aside_type"])
+    funding_office_code, funding_office_name = decode_option(market_filters["funding_office"])
+    pop_state, _state_label = decode_option(market_filters["pop_state"])
+    contracting_office_code, contracting_office_name = decode_contracting_office(contracting_office)
+    checks = {
+        "naics_code": (
+            naics_code == ALL_NAICS_CODES
+            or naics_code in (filters.get("naics_codes", {}).get("require") or [])
+        ),
+        "contract_type": (
+            contract_type_code == ALL_CONTRACT_TYPES
+            or contract_type_code in (filters.get("contract_pricing_type_codes") or [])
+        ),
+        "product_service_code": (
+            psc_code == ALL_PRODUCT_SERVICE_CODES
+            or psc_code in (filters.get("psc_codes") or [])
+        ),
+        "set_aside_type": (
+            set_aside_code == ALL_SET_ASIDE_TYPES
+            or set_aside_code in (filters.get("set_aside_type_codes") or [])
+        ),
+        "contracting_office": (
+            not contracting_office
+            or contracting_office == ALL_CONTRACTING_OFFICES
+            or client_side_filter.get("awarding_office_code") == contracting_office_code
+            or client_side_filter.get("awarding_office_name") == contracting_office_name
+        ),
+        "funding_office": (
+            market_filters["funding_office"] == ALL_FUNDING_OFFICES
+            or client_side_filter.get("funding_office_code") == funding_office_code
+            or client_side_filter.get("funding_office_name") == funding_office_name
+        ),
+        "place_of_performance_state": (
+            pop_state == ALL_POP_STATES
+            or any(
+                isinstance(location, dict) and location.get("state") == pop_state
+                for location in filters.get("place_of_performance_locations", [])
+            )
+        ),
+    }
+    return {
+        "checks": checks,
+        "all_active_refine_filters_applied": all(checks.values()),
+    }
 
 
 AWARD_SCOPE_FIELD_ALIASES = {
@@ -4639,12 +4636,14 @@ def render_analysis_dashboard(
         selected_contracting_office != ALL_CONTRACTING_OFFICES
         or selected_market_filters["funding_office"] != ALL_FUNDING_OFFICES
     )
+    active_refinements = has_active_refinements(selected_market_filters, selected_contracting_office)
     transaction_df = pd.DataFrame()
     transaction_payload = {}
+    transaction_source = ""
     transaction_error = None
 
     if office_filter_active:
-        transaction_df, transaction_payload, _transaction_source, transaction_error = fetch_office_filtered_download_transactions(
+        transaction_df, transaction_payload, transaction_source, transaction_error = fetch_office_filtered_download_transactions(
             active_agency,
             selected_bureau,
             int(selected_year),
@@ -4775,9 +4774,9 @@ def render_analysis_dashboard(
                 "Award scope metrics are unavailable for this scope. Contract obligation metrics remain available."
             )
         else:
-            st.warning("Award scope metrics are unavailable for this scope.")
+            st.info("Award scope metrics are unavailable for this scope.")
     if not office_filter_active:
-        transaction_df, transaction_payload, _transaction_source, transaction_error = fetch_transactions_cached(
+        transaction_df, transaction_payload, transaction_source, transaction_error = fetch_office_filtered_download_transactions(
             active_agency,
             selected_bureau,
             int(selected_year),
@@ -4798,6 +4797,12 @@ def render_analysis_dashboard(
                 if not vendor_df.empty and "amount" in vendor_df.columns
                 else 0.0
             )
+            if active_refinements:
+                trend_df = transaction_trend_dataframe(transaction_df, int(selected_year))
+                current_total, previous_total = current_and_previous(trend_df, int(selected_year))
+                yoy_delta = None
+                yoy_delta_value = format_delta(yoy_delta)
+                total_spend_value = format_money(current_total)
     if office_filter_active:
         returned_transaction_count = int(len(transaction_df))
         returned_obligation_sum = (
@@ -4846,12 +4851,14 @@ def render_analysis_dashboard(
             "Inspect the active filter payload and USAspending responses for a filter mismatch."
         )
     if current_total == 0 and not trend_error:
-        refinements_active = has_active_refinements(selected_market_filters, selected_contracting_office)
-        message = f"No {fiscal_year_label(int(selected_year))} contract obligations found for this market scope."
-        if refinements_active:
+        message = (
+            f"No {fiscal_year_label(int(selected_year))} prime contract obligations found for this selected scope. "
+            "USAspending may still show grants or assistance awards outside this contract-focused view."
+        )
+        if active_refinements:
             message += " Try clearing one or more refinements."
         st.info(message)
-        if refinements_active:
+        if active_refinements:
             if st.button("Clear Refinements", key="clear-refinements-empty-state"):
                 clear_active_refinements()
                 st.rerun()
@@ -5024,7 +5031,7 @@ def render_analysis_dashboard(
             )
     with chart_cols[1]:
         if leaderboard_df.empty:
-            st.error("Top Contractor Leaderboard unavailable from USAspending.gov.")
+            st.info("Top Contractor Leaderboard has no prime contract obligations for this scope.")
         else:
             st.plotly_chart(
                 make_vendor_chart(
@@ -5089,6 +5096,89 @@ def render_analysis_dashboard(
         if not obligation_time_df.empty and "amount" in obligation_time_df.columns
         else 0.0
     )
+    transaction_kpi_sum = (
+        float(pd.to_numeric(transaction_df["Obligation Amount"], errors="coerce").fillna(0).sum())
+        if not transaction_df.empty and "Obligation Amount" in transaction_df.columns
+        else 0.0
+    )
+    leaderboard_transaction_row_count = int(len(transaction_df))
+    grouped_vendor_count = int(len(vendor_df)) if not vendor_df.empty else 0
+    top_vendor_records = (
+        [
+            {
+                "recipient": str(row.get("recipient") or ""),
+                "amount": round(float(row.get("amount") or 0), 2),
+            }
+            for row in vendor_df.to_dict("records")
+        ]
+        if not vendor_df.empty
+        else []
+    )
+    leaderboard_filter_application = active_refine_filter_application_debug(
+        transaction_payload,
+        selected_market_filters,
+        selected_contracting_office,
+    )
+    leaderboard_mismatch = abs(float(current_total or 0)) >= 0.005 and grouped_vendor_count == 0
+    if leaderboard_mismatch:
+        print("Leaderboard mismatch: KPI has obligations but no grouped vendors.")
+        st.warning("Leaderboard mismatch: KPI has obligations but no grouped vendors.")
+    component_debug_payloads = {
+        "main_kpi": attach_component_scope_debug(
+            trend_payload,
+            "main_kpi",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in trend_source.lower(),
+        ),
+        "time_series": attach_component_scope_debug(
+            obligation_time_payload,
+            "time_series",
+            selected_bureau,
+            top_tier_fallback_used=False,
+        ),
+        "obligations_leaderboard": attach_component_scope_debug(
+            vendor_payload,
+            "obligations_leaderboard",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in vendor_source.lower(),
+        ),
+        "award_scope": attach_component_scope_debug(
+            award_scope_payload,
+            "award_scope",
+            selected_bureau,
+            top_tier_fallback_used=False,
+        ),
+        "negative_obligations": attach_component_scope_debug(
+            transaction_payload,
+            "negative_obligations",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in transaction_source.lower(),
+        ),
+        "signal_log": attach_component_scope_debug(
+            transaction_payload,
+            "signal_log",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in transaction_source.lower(),
+        ),
+        "office_filter_options": attach_component_scope_debug(
+            transaction_payload,
+            "office_filter_options",
+            selected_bureau,
+            top_tier_fallback_used="top-tier fallback" in transaction_source.lower(),
+        ),
+    }
+    component_scope_debug = {
+        component_name: payload.get("component_scope_debug", {}).get(component_name, {})
+        for component_name, payload in component_debug_payloads.items()
+        if isinstance(payload, dict)
+    }
+    fallback_violations = [
+        debug["log_message"]
+        for debug in component_scope_debug.values()
+        if debug.get("fallback_violation")
+    ]
+    if fallback_violations:
+        st.warning("ERROR: explicit subagency selected but component used top-tier fallback")
     award_scope_debug = award_scope_payload.get("award_scope_debug", {})
     dashboard_debug_payload = {
         "main_kpi_obligation_total": round(float(current_total), 2),
@@ -5106,6 +5196,25 @@ def render_analysis_dashboard(
         "time_series_total_obligation_sum": round(time_series_total, 2),
         "active_subagency_filter_sent_to_usaspending": resolve_bureau_filter_name(selected_bureau),
         "subagency_was_ui_only_not_applicable": bureau_is_ui_only_not_applicable(selected_bureau),
+        "component_scope_debug": component_scope_debug,
+        "fallback_violations": fallback_violations,
+        "leaderboard_reconciliation": {
+            "active_filter_payload": active_scope_payload,
+            "transaction_row_count_used_by_kpi": int(len(transaction_df)),
+            "kpi_obligation_sum": round(float(current_total), 2),
+            "transaction_dataframe_obligation_sum": round(transaction_kpi_sum, 2),
+            "leaderboard_source": "active filtered transaction dataframe",
+            "leaderboard_transaction_row_count": leaderboard_transaction_row_count,
+            "grouped_vendor_count": grouped_vendor_count,
+            "top_vendors": top_vendor_records,
+            "all_active_refine_filters_applied_to_leaderboard_rows": leaderboard_filter_application[
+                "all_active_refine_filters_applied"
+            ],
+            "active_refine_filter_application": leaderboard_filter_application,
+            "mismatch_error": "Leaderboard mismatch: KPI has obligations but no grouped vendors."
+            if leaderboard_mismatch
+            else "",
+        },
     }
 
     with st.expander("API Payloads"):
