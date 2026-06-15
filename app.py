@@ -8617,8 +8617,7 @@ def render_solicitation_workflow_cta() -> None:
     st.markdown(
         """
         <div class="workflow-cta-title">Have a solicitation in hand?</div>
-        <div class="workflow-cta-subtitle">Upload the solicitation package and GovCon Agency Trends will extract the market scope, identify amendments, and prepare confirmed filters for your review.</div>
-        <div class="workflow-cta-helper">Upload the base solicitation, amendments, PWS/SOW, Section L/M, pricing files, Q&amp;A, and related attachments. Multiple files are supported.</div>
+        <div class="workflow-cta-subtitle">Upload the solicitation package and GovCon Agency Trends will do the rest.</div>
         """,
         unsafe_allow_html=True,
     )
