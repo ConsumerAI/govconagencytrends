@@ -1,0 +1,40 @@
+SOLICITATION/CONTRACT FORM
+Tyndall Air Force Base, Florida Mess Attendant Recompete
+
+5. SOLICITATION NUMBER
+FA481926R0001
+
+9. ISSUED BY
+Department of the Air Force
+FA4819 325 CONS PKP
+
+NAICS: 722310
+PSC: S203
+
+CONTRACT TYPE: Firm Fixed Price (FFP)
+
+This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15.
+
+PLACE OF PERFORMANCE:
+Berg-Liles Dining Facility (Main Dining Facility), Bldg 1690, Tyndall AFB, FL
+
+PERIOD OF PERFORMANCE:
+Start: 01 Oct 2026
+End: 30 Sep 2031
+Total: 5 Years
+
+INCUMBENT CONTRACTOR:
+Trogon Group Services, LLC
+Prior Contract PIID: FA481924C0006
+
+CONTRACTING OFFICER: Jane Smith, Contracting Officer
+CONTRACT SPECIALIST: John Doe, Contract Specialist
+PRIMARY POC: contracting.tyndall@example.mil
+
+EVALUATION METHODOLOGY:
+Tradeoff / Best Value with relative importance of Technical and Price.
+
+SECTION L SUBMISSION:
+Submit proposals electronically via DoD SAFE to submissions.tyndall@example.mil
+
+QUESTIONS DUE DATE: 15 Apr 2026

@@ -1,0 +1,75 @@
+{
+  "version": "resolved_signals.v1",
+  "signals": [
+    {
+      "id": "rfp_solicitation_id_v1",
+      "canonical_value": "140R2026Q0025",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:1", "snippet": "140R2026Q0025"}]}
+    },
+    {
+      "id": "rfp_title_v1",
+      "canonical_value": "Columbia Mowry Operation & Maintenance (O&M) Support Services",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:4", "snippet": "Columbia Mowry Operation & Maintenance (O&M) Support Services"}]}
+    },
+    {
+      "id": "rfp_issuing_agency_v1",
+      "canonical_value": "Bureau of Reclamation",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:1", "snippet": "Bureau of Reclamation"}]}
+    },
+    {
+      "id": "rfp_issuing_office_v1",
+      "canonical_value": "Division of Acquisition Services",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:1", "snippet": "Division of Acquisition Services"}]}
+    },
+    {
+      "id": "rfp_office_aac_v1",
+      "canonical_value": "R20",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:1", "snippet": "R20"}]}
+    },
+    {
+      "id": "rfp_primary_naics_v1",
+      "canonical_value": "561210",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:5", "snippet": "NAICS Code: 561210"}]}
+    },
+    {
+      "id": "rfp_primary_psc_v1",
+      "canonical_value": "S216",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:5", "snippet": "PSC: S216"}]}
+    },
+    {
+      "id": "rfp_contract_type_v1",
+      "canonical_value": "Hybrid Time & Materials and Firm-Fixed Price",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:4", "snippet": "hybrid Time & Material and Firm-Fixed Price (FFP) purchase order"}]}
+    },
+    {
+      "id": "rfp_set_aside_v1",
+      "canonical_value": "Unrestricted",
+      "canonical_confidence": "high",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:5", "snippet": "This requirement is being solicited unrestricted."}]}
+    },
+    {
+      "id": "rfp_place_of_performance_v1",
+      "canonical_value": "Fresno, CA",
+      "canonical_confidence": "medium",
+      "resolution_status": "validated_model_extraction",
+      "evidence": {"legacy": [{"sourceId": "Sol_140R2026Q0025.pdf", "locator": "page:6", "snippet": "Place of Performance: Fresno, CA"}]}
+    }
+  ]
+}

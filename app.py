@@ -7,7 +7,7 @@ import os
 import re
 import time
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -16,6 +16,30 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from openai import OpenAI
+
+from extraction.config import get_data_dir, get_extraction_mode, load_project_env
+from extraction.streamlit_upload import (
+    cleanup_staged_paths,
+    ocr_environment_status,
+    run_extraction_from_paths,
+    validate_and_stage_uploads,
+)
+from extraction.persist import read_json
+from solicitation_workflow import (
+    AUTO_MAPPED_DASHBOARD_FILTER_FIELDS,
+    build_fast_scope_detail_rows,
+    build_solicitation_additional_filter_rows,
+    count_auto_mapped_dashboard_filters,
+    dedupe_extraction_findings,
+    fast_scope_requested_count,
+    is_ocr_environment_notice,
+    is_solicitation_filter_removed,
+    match_psc_to_options,
+    resolve_solicitation_filter_pending_value,
+    should_show_blocking_ocr_error,
+    solicitation_scope_review_visible,
+    solicitation_status_alert_text,
+)
 from pypdf import PdfReader
 
 
@@ -46,7 +70,8 @@ ALL_NAICS_CODES = "All NAICS Codes"
 ALL_CONTRACT_TYPES = "All Contract Types"
 ALL_PRODUCT_SERVICE_CODES = "All Product / Service Codes"
 ALL_SET_ASIDE_TYPES = "All Set-Aside Types"
-ALL_POP_STATES = "All States"
+ALL_POP_LOCATIONS = "All Locations"
+LEGACY_ALL_POP_STATES = "All States"
 OPTION_SEPARATOR = "||"
 TIME_GRAIN_MONTH = "By Month"
 TIME_GRAIN_FISCAL_QUARTER = "By Fiscal Quarter"
@@ -106,6 +131,7 @@ CONTRACT_TYPE_OPTIONS = {
     "Z": "LABOR HOURS",
 }
 SET_ASIDE_TYPE_OPTIONS = {
+    "NONE": "Unrestricted",
     "SBA": "Small Business Set-Aside",
     "SBP": "Small Business Partial Set-Aside",
     "8A": "8(a) Competed",
@@ -169,6 +195,7 @@ STATE_OPTIONS = {
     "WV": "West Virginia",
     "WY": "Wyoming",
 }
+POP_COUNTRY_OPTION_EXCLUSIONS = {"USA", "US", "FOREIGN"}
 TERMINATION_ACTION_MAP = {
     "E": "Default",
     "F": "Convenience",
@@ -210,7 +237,89 @@ ADMINISTRATIVE_TERMS = (
     "SETTLEMENT",
 )
 DEOBLIGATION_TERMS = ("DEOBLIG", "DE-OBLIG", "REDUCTION", "REDUCE", "DECREASE")
+RESOLVED_SIGNALS_VERSION = "resolved_signals.v1"
+KEEP_CURRENT_SOLICITATION_FILTER = "— Keep current —"
+KEEP_REMOVED_SOLICITATION_FILTER = "— Keep removed —"
+SOLICITATION_MAPPING_UNAVAILABLE_STATUS = "Mapping temporarily unavailable"
+# Dashboard filters that require explicit user confirmation before apply.
+SOLICITATION_USER_CONFIRMATION_FILTER_KEYS = frozenset({"pop_state", "funding_office", "contract_type"})
+SOLICITATION_POP_CAUTION_NOTE = (
+    "Place of Performance may include multiple locations or contractor/remote work. "
+    "This filter is always confirmed by the analyst."
+)
+SOLICITATION_MARKET_REVIEW_FIELDS: tuple[tuple[str, str | None], ...] = (
+    ("Agency", "agency"),
+    ("Subagency / Bureau", "bureau"),
+    ("Contracting Office", "contracting_office"),
+    ("AAC", None),
+    ("NAICS", "naics_code"),
+    ("PSC", "psc_code"),
+    ("Contract Type", "contract_type"),
+    ("Set-Aside", "set_aside_type"),
+    ("Place of Performance", "pop_state"),
+    ("Funding Office", "funding_office"),
+)
+SOLICITATION_MISSING_MARKET_FIELDS = {"Contracting Office", "AAC", "NAICS", "PSC", "Set-Aside"}
+SOLICITATION_SOURCE_COMPLETENESS_CRITICAL_FIELDS = {
+    "Contracting Office",
+    "NAICS",
+    "PSC",
+    "Contract Type",
+    "Set-Aside",
+}
+SOLICITATION_CONFIRMED_VALIDATION_STATUSES = {
+    "confirmed",
+    "validated",
+    "validated_model_extraction",
+    "deterministic_hierarchy",
+}
+EXTRACTION_STATUSES = {"idle", "running", "completed", "timed_out", "failed"}
+MAPPING_STATUSES = {"not_started", "running", "completed", "partial", "timed_out", "failed"}
+REVIEW_STATUSES = {"not_ready", "ready", "displayed"}
+# Deterministic top-tier agency + subagency/bureau pairs for common solicitation org values.
+SOLICITATION_ORGANIZATION_HIERARCHY: dict[str, tuple[str, str]] = {
+    "doi": ("Department of the Interior", ALL_BUREAUS),
+    "department of interior": ("Department of the Interior", ALL_BUREAUS),
+    "department of the interior": ("Department of the Interior", ALL_BUREAUS),
+    "bureau of reclamation": ("Department of the Interior", "Bureau of Reclamation"),
+    "reclamation": ("Department of the Interior", "Bureau of Reclamation"),
+    "bor": ("Department of the Interior", "Bureau of Reclamation"),
+    "usbr": ("Department of the Interior", "Bureau of Reclamation"),
+    "department of the air force": ("Department of Defense", "Department of the Air Force"),
+    "air force": ("Department of Defense", "Department of the Air Force"),
+    "usaf": ("Department of Defense", "Department of the Air Force"),
+    "department of the army": ("Department of Defense", "Department of the Army"),
+    "army": ("Department of Defense", "Department of the Army"),
+    "department of the navy": ("Department of Defense", "Department of the Navy"),
+    "navy": ("Department of Defense", "Department of the Navy"),
+    "marine corps": ("Department of Defense", "Department of the Navy"),
+    "usmc": ("Department of Defense", "Department of the Navy"),
+    "defense logistics agency": ("Department of Defense", "Defense Logistics Agency"),
+    "dla": ("Department of Defense", "Defense Logistics Agency"),
+    "department of state": ("Department of State", ALL_BUREAUS),
+    "state department": ("Department of State", ALL_BUREAUS),
+    "dos": ("Department of State", ALL_BUREAUS),
+    "nasa": ("National Aeronautics and Space Administration", ALL_BUREAUS),
+    "national aeronautics and space administration": (
+        "National Aeronautics and Space Administration",
+        ALL_BUREAUS,
+    ),
+}
+SOLICITATION_CONTRACT_TYPE_ALIASES = {
+    "ffp": "J",
+    "firm fixed price": "J",
+    "cpff": "U",
+    "cost plus fixed fee": "U",
+    "t&m": "Y",
+    "time & materials": "Y",
+    "time material": "Y",
+    "time and materials": "Y",
+    "labor hour": "Z",
+    "labor hours": "Z",
+}
 AGENCY_ALIASES = {
+    "doi": "Department of the Interior",
+    "interior": "Department of the Interior",
     "dod": "Department of Defense",
     "defense": "Department of Defense",
     "va": "Department of Veterans Affairs",
@@ -245,6 +354,57 @@ def request_headers() -> dict:
         "Accept": "application/json",
         "User-Agent": "govcon-pulse-streamlit/1.0",
     }
+
+
+def env_float(name: str, default: float, minimum: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(minimum, float(raw))
+    except ValueError:
+        return default
+
+
+def solicitation_option_request_timeout_sec() -> float:
+    return env_float("GOVCON_SOLICITATION_OPTION_TIMEOUT_SEC", 20.0, 5.0)
+
+
+def solicitation_mapping_timeout_sec() -> float:
+    return env_float("GOVCON_SOLICITATION_MAPPING_TIMEOUT_SEC", 45.0, 15.0)
+
+
+class SolicitationMappingTimeout(TimeoutError):
+    pass
+
+
+def _solicitation_mapping_stage(
+    stage: str,
+    started_at: float,
+    status: str,
+    *,
+    function: str,
+    exc: Exception | None = None,
+) -> dict:
+    ended_at = time.time()
+    event = {
+        "stage": stage,
+        "status": status,
+        "function": function,
+        "startTime": started_at,
+        "endTime": ended_at,
+        "elapsedSeconds": round(ended_at - started_at, 3),
+        "heartbeatAt": ended_at,
+    }
+    if exc is not None:
+        event["exceptionClass"] = type(exc).__name__
+        event["exceptionMessage"] = str(exc)
+    return event
+
+
+def _check_solicitation_mapping_deadline(deadline: float, stage: str) -> None:
+    if time.monotonic() > deadline:
+        raise SolicitationMappingTimeout(f"{stage} exceeded solicitation filter matching timeout")
 
 
 @st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
@@ -361,8 +521,16 @@ def inject_styles() -> None:
             --panel: #161922;
             --panel-2: #1f2430;
             --line: rgba(255, 255, 255, 0.11);
-            --text: #f4f7fb;
-            --muted: #aab4c2;
+            --text-primary: #f4f7fb;
+            --text-secondary: #dce5ef;
+            --text-muted: #bac6d4;
+            --text-disabled: #9aa7b8;
+            --text-link: #67e8f9;
+            --text-warning: #fcd34d;
+            --text-error: #fda4af;
+            --text-success: #86efac;
+            --text: var(--text-primary);
+            --muted: var(--text-muted);
             --teal: #2dd4bf;
             --cyan: #38bdf8;
             --amber: #f59e0b;
@@ -385,7 +553,12 @@ def inject_styles() -> None:
         [data-testid="stWidgetLabel"] *,
         label,
         label * {
-            color: var(--muted) !important;
+            color: var(--text-secondary) !important;
+        }
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] * {
+            color: var(--text-muted) !important;
+            opacity: 1 !important;
         }
         [data-testid="stSidebar"] {
             background: #11131a;
@@ -405,7 +578,7 @@ def inject_styles() -> None:
         }
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] legend {
-            color: #f4f7fb !important;
+            color: var(--text-primary) !important;
             font-size: 13px !important;
             font-weight: 800 !important;
             letter-spacing: 0 !important;
@@ -458,7 +631,12 @@ def inject_styles() -> None:
         [data-testid="stTable"] *,
         div[data-testid="stDataFrame"] div,
         div[data-testid="stDataFrame"] span {
-            color: #1A1A1A !important;
+            color: var(--text-secondary) !important;
+        }
+        [data-testid="stDataFrame"],
+        [data-testid="stTable"] {
+            background: rgba(9, 14, 27, 0.60) !important;
+            border-radius: 12px;
         }
         [data-testid="stSidebar"] input::placeholder,
         [data-testid="stSidebar"] textarea::placeholder {
@@ -474,7 +652,7 @@ def inject_styles() -> None:
             background-color: #ffffff !important;
         }
         [data-testid="stSidebar"] .sidebar-title {
-            color: #f4f7fb;
+            color: var(--text-primary);
             font-size: 22px;
             font-weight: 850;
             line-height: 1.12;
@@ -482,13 +660,13 @@ def inject_styles() -> None:
             margin: 0 0 6px;
         }
         [data-testid="stSidebar"] .sidebar-subtitle {
-            color: #aab4c2;
+            color: var(--text-muted);
             font-size: 13px;
             line-height: 1.35;
             margin: 0 0 18px;
         }
         [data-testid="stSidebar"] .sidebar-section {
-            color: #2dd4bf;
+            color: var(--teal);
             font-size: 11px;
             font-weight: 850;
             letter-spacing: 0;
@@ -548,6 +726,60 @@ def inject_styles() -> None:
             margin: 0 auto 22px;
             max-width: 620px;
             text-align: center;
+        }
+        .workflow-section-label {
+            color: var(--text);
+            font-size: 15px;
+            font-weight: 850;
+            margin: 0 0 4px;
+        }
+        .workflow-section-helper {
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.45;
+            margin: 0 0 14px;
+        }
+        .workflow-or-divider {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            margin: 28px 0 24px;
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        .workflow-or-divider::before,
+        .workflow-or-divider::after {
+            content: "";
+            flex: 1;
+            height: 1px;
+            background: rgba(148, 163, 184, 0.22);
+        }
+        .workflow-cta-title {
+            color: var(--text);
+            font-size: 18px;
+            font-weight: 850;
+            margin: 0 0 6px;
+        }
+        .workflow-cta-subtitle {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.45;
+            margin: 0 0 8px;
+        }
+        .workflow-cta-helper {
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.45;
+            margin: 0 0 14px;
+        }
+        .workflow-test-mode-note {
+            color: var(--text-muted);
+            font-size: 11px;
+            line-height: 1.4;
+            margin-top: 8px;
         }
         .hero {
             padding: 34px 36px 30px;
@@ -630,7 +862,7 @@ def inject_styles() -> None:
             margin-top: 12px;
         }
         .metric-helper {
-            color: rgba(170, 180, 194, 0.86);
+            color: var(--text-muted);
             font-size: 11px;
             line-height: 1.35;
             margin-top: 8px;
@@ -745,9 +977,14 @@ def inject_styles() -> None:
             text-transform: uppercase;
         }
         .analysis-loading-footer {
-            color: rgba(170, 180, 194, 0.88);
+            color: var(--text-muted);
             font-size: 12px;
             font-weight: 700;
+        }
+        .extraction-loading-card .extraction-doc-name {
+            font-size: 16px;
+            line-height: 1.25;
+            word-break: break-word;
         }
         @keyframes analysisSpin {
             to { transform: rotate(360deg); }
@@ -801,6 +1038,38 @@ def inject_styles() -> None:
             background: linear-gradient(135deg, #2dd4bf, #38bdf8);
             border-color: rgba(45, 212, 191, 0.75);
         }
+        .applied-filter-heading {
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 800;
+            margin: 14px 0 6px;
+        }
+        .applied-filter-chip-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 8px 0 12px;
+        }
+        .applied-filter-chip-row [data-testid="column"] {
+            width: auto !important;
+            flex: 0 1 auto !important;
+            min-width: 0 !important;
+        }
+        .applied-filter-chip-row .stButton>button,
+        [class*="st-key-remove-applied-filter-"] button {
+            min-height: 0;
+            width: auto;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.30) !important;
+            background: #20242f !important;
+            color: var(--text-primary) !important;
+            padding: 5px 10px !important;
+            font-size: 12px !important;
+            font-weight: 800 !important;
+            line-height: 1.25;
+            box-shadow: none;
+            transform: none;
+        }
         .other-filters {
             color: var(--muted);
             font-size: 13px;
@@ -813,18 +1082,180 @@ def inject_styles() -> None:
             letter-spacing: 0;
             margin: 26px 0 12px;
         }
+        .section-spacer {
+            height: 8px;
+        }
+        .debug-section-note {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin: 8px 0 4px;
+        }
+        .market-summary-panel {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 14px;
+            padding: 14px 16px 12px;
+            margin: 14px 0 18px;
+            background: rgba(9, 14, 27, 0.50);
+        }
+        .market-summary-title {
+            color: var(--text);
+            font-size: 16px;
+            font-weight: 850;
+            margin-bottom: 4px;
+        }
+        .market-summary-helper {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        .solicitation-status-badge {
+            display: inline-block;
+            padding: 3px 9px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-weight: 800;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+        .solicitation-status-exact {
+            background: rgba(45, 212, 191, 0.18);
+            color: #99f6e4;
+            border: 1px solid rgba(45, 212, 191, 0.35);
+        }
+        .solicitation-status-suggested {
+            background: rgba(56, 189, 248, 0.16);
+            color: #7dd3fc;
+            border: 1px solid rgba(56, 189, 248, 0.32);
+        }
+        .solicitation-status-confirm {
+            background: rgba(245, 158, 11, 0.16);
+            color: var(--text-warning);
+            border: 1px solid rgba(245, 158, 11, 0.32);
+        }
+        .solicitation-status-unmapped {
+            background: rgba(251, 113, 133, 0.14);
+            color: var(--text-error);
+            border: 1px solid rgba(251, 113, 133, 0.30);
+        }
+        .solicitation-status-context {
+            background: rgba(100, 116, 139, 0.18);
+            color: #cbd5e1;
+            border: 1px solid rgba(100, 116, 139, 0.30);
+        }
+        .solicitation-status-auto {
+            background: rgba(34, 197, 94, 0.14);
+            color: var(--text-success);
+            border: 1px solid rgba(34, 197, 94, 0.30);
+        }
+        .solicitation-status-manual {
+            background: rgba(167, 139, 250, 0.16);
+            color: #c4b5fd;
+            border: 1px solid rgba(167, 139, 250, 0.30);
+        }
+        .solicitation-status-removed {
+            background: rgba(244, 63, 94, 0.14);
+            color: var(--text-error);
+            border: 1px solid rgba(244, 63, 94, 0.28);
+        }
+        .solicitation-status-alert-card {
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            background: rgba(245, 158, 11, 0.10);
+            border-radius: 12px;
+            padding: 10px 12px;
+            margin: 8px 0 14px;
+            color: var(--text-warning);
+            font-size: 13px;
+            font-weight: 650;
+        }
+        .solicitation-scope-muted {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .solicitation-baseline-line {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin: 0 0 10px;
+        }
+        .text-secondary {
+            color: var(--text-secondary);
+        }
+        .text-muted {
+            color: var(--text-muted);
+        }
+        .scope-review-helper {
+            color: var(--text-muted);
+            font-size: 12px;
+            line-height: 1.45;
+            margin: 2px 0 8px;
+        }
+        .scope-review-summary {
+            color: var(--text-secondary);
+            font-size: 13px;
+            line-height: 1.45;
+            margin: 4px 0 12px;
+        }
+        .solicitation-summary-card {
+            border: 1px solid rgba(45, 212, 191, 0.18);
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin: 10px 0 16px;
+            background: rgba(9, 14, 27, 0.42);
+        }
+        .solicitation-trust-note {
+            color: var(--text-muted);
+            font-size: 12px;
+            line-height: 1.45;
+            margin: 10px 0 8px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(9, 14, 27, 0.36);
+        }
+        .solicitation-preview-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin: 8px 0 14px;
+        }
+        .solicitation-preview-table th,
+        .solicitation-preview-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+            vertical-align: top;
+        }
+        .solicitation-preview-table th {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .solicitation-preview-table td {
+            color: var(--text-secondary);
+        }
+        .solicitation-review-note {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin: 4px 0 10px;
+        }
         .award-drilldown-table-wrap {
             width: 100%;
             overflow-x: auto;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 10px;
-            background: #ffffff;
-            margin-top: 8px;
+            border: 1px solid rgba(148, 163, 184, 0.20);
+            border-radius: 14px;
+            background: rgba(9, 14, 27, 0.74);
+            margin-top: 10px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.035), 0 18px 44px rgba(0,0,0,0.22);
+        }
+        .award-drilldown-table-wrap--scroll {
+            max-height: 430px;
+            overflow-y: auto;
         }
         .award-drilldown-table {
             width: 100%;
             border-collapse: collapse;
-            color: #1A1A1A;
+            color: var(--text-secondary);
             font-size: 13px;
             line-height: 1.35;
         }
@@ -832,19 +1263,27 @@ def inject_styles() -> None:
             position: sticky;
             top: 0;
             z-index: 1;
-            background: #f3f6fb;
-            color: #1A1A1A;
+            background: #111827;
+            color: var(--text-primary);
             font-weight: 850;
             text-align: left;
             white-space: nowrap;
-            padding: 10px 12px;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.16);
+            padding: 11px 12px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.20);
         }
         .award-drilldown-table td {
             max-width: 260px;
             padding: 9px 12px;
-            border-bottom: 1px solid rgba(15, 23, 42, 0.10);
+            border-bottom: 1px solid rgba(148, 163, 184, 0.13);
             vertical-align: top;
+            color: var(--text-secondary);
+            background: rgba(15, 23, 42, 0.32);
+        }
+        .award-drilldown-table tr:nth-child(even) td {
+            background: rgba(15, 23, 42, 0.46);
+        }
+        .award-drilldown-table tr:hover td {
+            background: rgba(45, 212, 191, 0.08);
         }
         .award-drilldown-table td:nth-child(3),
         .award-drilldown-table td:nth-child(8),
@@ -852,7 +1291,7 @@ def inject_styles() -> None:
             min-width: 220px;
         }
         .award-drilldown-table a {
-            color: #0369a1;
+            color: var(--text-link);
             font-weight: 800;
             text-decoration: none;
             white-space: nowrap;
@@ -899,7 +1338,7 @@ def inject_styles() -> None:
             margin-top: 6px;
         }
         .market-intel-helper {
-            color: rgba(170, 180, 194, 0.90);
+            color: var(--text-muted);
             font-size: 12px;
             line-height: 1.35;
             margin-top: 8px;
@@ -917,11 +1356,58 @@ def inject_styles() -> None:
             min-width: 2px;
             height: 100%;
         }
+        .market-concentration-legend {
+            margin-top: 10px;
+        }
+        .market-concentration-legend-heading {
+            color: var(--text-muted);
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .market-concentration-legend-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 12px 8px 10px;
+            margin-bottom: 7px;
+            border-radius: 9px;
+            border-left: 4px solid;
+        }
+        .market-concentration-legend-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 750;
+            line-height: 1.35;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .market-concentration-legend-metrics {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .market-concentration-legend-badge {
+            padding: 4px 10px;
+            border-radius: 8px;
+            border: 1px solid;
+            background: rgba(9, 14, 27, 0.58);
+            font-size: 12px;
+            font-weight: 750;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
         .market-intel-note {
             display: flex;
             align-items: center;
             min-height: 84px;
-            color: rgba(170, 180, 194, 0.92);
+            color: var(--text-muted);
             font-size: 13px;
             line-height: 1.4;
             background: rgba(9, 14, 27, 0.52);
@@ -941,8 +1427,57 @@ def inject_styles() -> None:
             border-color: #f59e0b;
             color: #061015;
         }
+        .stDownloadButton>button {
+            border-radius: 8px;
+            border: 1px solid rgba(45, 212, 191, 0.45);
+            background: linear-gradient(135deg, #2dd4bf, #38bdf8);
+            color: #061015;
+            font-weight: 800;
+            min-height: 42px;
+        }
+        .stButton>button:disabled,
+        .stDownloadButton>button:disabled {
+            background: rgba(148, 163, 184, 0.16) !important;
+            border-color: rgba(148, 163, 184, 0.24) !important;
+            color: var(--text-disabled) !important;
+            opacity: 1 !important;
+            box-shadow: none !important;
+        }
+        .control-button-spacer {
+            height: 28px;
+        }
         [data-testid="stMetricValue"] {
             color: var(--text);
+        }
+        [data-testid="stExpander"] {
+            background: rgba(9, 14, 27, 0.72) !important;
+            border: 1px solid rgba(148, 163, 184, 0.20) !important;
+            border-radius: 12px !important;
+            overflow: hidden;
+        }
+        [data-testid="stExpander"] details {
+            background: transparent !important;
+            border: none !important;
+        }
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary:hover,
+        [data-testid="stExpander"] summary:focus {
+            background: rgba(15, 23, 42, 0.92) !important;
+            color: var(--text) !important;
+            border: none !important;
+            border-radius: 12px !important;
+        }
+        [data-testid="stExpander"] summary *,
+        [data-testid="stExpander"] summary p,
+        [data-testid="stExpander"] summary span,
+        [data-testid="stExpander"] summary svg {
+            color: var(--text) !important;
+            fill: var(--text) !important;
+        }
+        [data-testid="stExpander"] [data-testid="stExpanderDetails"],
+        [data-testid="stExpander"] .streamlit-expanderContent {
+            background: rgba(9, 14, 27, 0.50) !important;
+            border-top: 1px solid rgba(148, 163, 184, 0.14) !important;
         }
         </style>
         """,
@@ -1034,7 +1569,1811 @@ def default_market_filters() -> dict:
         "psc_code": ALL_PRODUCT_SERVICE_CODES,
         "set_aside_type": ALL_SET_ASIDE_TYPES,
         "funding_office": ALL_FUNDING_OFFICES,
-        "pop_state": ALL_POP_STATES,
+        "pop_state": ALL_POP_LOCATIONS,
+    }
+
+
+def is_us_pop_state_code(code: str | None) -> bool:
+    return str(code or "").strip().upper() in STATE_OPTIONS
+
+
+def build_place_of_performance_location_filter(location_code: str) -> dict:
+    normalized = str(location_code or "").strip().upper()
+    if is_us_pop_state_code(normalized):
+        return {"country": "USA", "state": normalized}
+    return {"country": normalized}
+
+
+def place_of_performance_filter_matches(location_code: str, locations: list[dict]) -> bool:
+    if not location_code or location_code in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES):
+        return True
+    expected = build_place_of_performance_location_filter(location_code)
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        if location.get("country") != expected.get("country"):
+            continue
+        expected_state = expected.get("state")
+        if expected_state:
+            if location.get("state") == expected_state:
+                return True
+        else:
+            return True
+    return False
+
+
+def load_resolved_signals_json(uploaded_file) -> dict:
+    if uploaded_file is None:
+        raise ValueError("No resolved_signals.json file was provided.")
+    if isinstance(uploaded_file, dict):
+        payload = uploaded_file
+    elif isinstance(uploaded_file, (str, Path)):
+        path = Path(uploaded_file)
+        if not path.exists():
+            raise ValueError(f"resolved_signals.json not found: {path}")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    elif hasattr(uploaded_file, "read"):
+        raw = uploaded_file.read()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        payload = json.loads(raw)
+    else:
+        raise ValueError("Unsupported resolved_signals.json input type.")
+
+    if not isinstance(payload, dict):
+        raise ValueError("resolved_signals.json must be a JSON object.")
+    version = str(payload.get("version") or "").strip()
+    if version and version != RESOLVED_SIGNALS_VERSION:
+        raise ValueError(f"Unsupported resolved_signals version: {version}")
+    signals = payload.get("signals")
+    if not isinstance(signals, list):
+        raise ValueError("resolved_signals.json must contain a signals[] array.")
+    for index, signal in enumerate(signals):
+        if not isinstance(signal, dict):
+            raise ValueError(f"signals[{index}] must be an object.")
+        if not str(signal.get("id") or "").strip():
+            raise ValueError(f"signals[{index}] is missing id.")
+    return payload
+
+
+def get_signal(resolved_signals: dict, signal_id: str) -> dict | None:
+    if not isinstance(resolved_signals, dict):
+        return None
+    for signal in resolved_signals.get("signals") or []:
+        if isinstance(signal, dict) and signal.get("id") == signal_id:
+            return signal
+    return None
+
+
+def display_signal_scalar(value: object | None, signal_id: str | None = None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from extraction.package_llm.canonicalize import canonical_scalar_for_signal
+
+        scalar, _ = canonical_scalar_for_signal(signal_id or "", value)
+        if scalar is not None and not isinstance(scalar, dict):
+            return str(scalar).strip() or None
+        return None
+    if isinstance(value, (list, tuple, set)):
+        parts = [str(item).strip() for item in value if item not in (None, "")]
+        return ", ".join(parts) if parts else None
+    text = str(value).strip()
+    return text or None
+
+
+def get_signal_value(resolved_signals: dict, signal_id: str) -> tuple[object | None, str | None]:
+    signal = get_signal(resolved_signals, signal_id)
+    if not signal:
+        return None, None
+    value = signal.get("canonical_value")
+    confidence = str(signal.get("canonical_confidence") or "").strip().lower() or None
+    if value is None:
+        package_llm = signal.get("package_llm") if isinstance(signal.get("package_llm"), dict) else {}
+        model_value = package_llm.get("modelValue")
+        if model_value is not None:
+            value = display_signal_scalar(model_value, signal_id)
+        if value is None:
+            return None, confidence
+    scalar = display_signal_scalar(value, signal_id)
+    if scalar is None:
+        return None, confidence
+    return scalar, confidence
+
+
+def signal_evidence_details(signal: dict | None) -> dict:
+    if not isinstance(signal, dict):
+        return {"source": "", "locator": "", "snippet": ""}
+    evidence = signal.get("evidence") or {}
+    legacy_items = evidence.get("legacy") or []
+    for item in legacy_items:
+        if isinstance(item, dict):
+            return {
+                "source": clean_office_value(item.get("sourceId")),
+                "locator": clean_office_value(item.get("locator")),
+                "snippet": clean_office_value(item.get("snippet")),
+            }
+    evidence_v1 = evidence.get("evidence_v1")
+    if isinstance(evidence_v1, dict):
+        return {
+            "source": clean_office_value(evidence_v1.get("source")),
+            "locator": "",
+            "snippet": clean_office_value(evidence_v1.get("excerpt")),
+        }
+    return {"source": "", "locator": "", "snippet": ""}
+
+
+def signal_evidence_snippet(signal: dict | None, max_length: int = 220) -> str:
+    if not isinstance(signal, dict):
+        return ""
+    evidence = signal.get("evidence") or {}
+    legacy_items = evidence.get("legacy") or []
+    for item in legacy_items:
+        if isinstance(item, dict):
+            snippet = clean_office_value(item.get("snippet"))
+            if snippet:
+                return snippet[:max_length]
+    evidence_v1 = evidence.get("evidence_v1")
+    if isinstance(evidence_v1, dict):
+        excerpt = clean_office_value(evidence_v1.get("excerpt"))
+        if excerpt:
+            return excerpt[:max_length]
+    return ""
+
+
+def first_signal_value(
+    resolved_signals: dict,
+    signal_ids: list[str],
+) -> tuple[object | None, str | None, str | None, dict | None]:
+    for signal_id in signal_ids:
+        signal = get_signal(resolved_signals, signal_id)
+        if not signal:
+            continue
+        value, confidence = get_signal_value(resolved_signals, signal_id)
+        if value is not None:
+            return value, confidence, signal_id, signal
+    return None, None, None, None
+
+
+def signal_review_model_value(signal: dict | None) -> object | None:
+    if not isinstance(signal, dict):
+        return None
+    package_llm = signal.get("package_llm")
+    if isinstance(package_llm, dict):
+        return package_llm.get("modelValue")
+    return None
+
+
+def extract_category_code(value: object | None) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    match = re.search(r"\b([A-Z0-9]{1,6})\b", text.upper())
+    return match.group(1) if match else text.upper()
+
+
+def parse_pop_state_from_text(value: object | None) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    text = str(value).strip()
+    if not text:
+        return None, None
+    for code, name in STATE_OPTIONS.items():
+        if re.search(rf"\b{re.escape(name)}\b", text, flags=re.IGNORECASE):
+            return code, name
+    state_match = re.search(r",\s*([A-Z]{2})\b", text)
+    if state_match and state_match.group(1).upper() in STATE_OPTIONS:
+        code = state_match.group(1).upper()
+        return code, STATE_OPTIONS[code]
+    for code in STATE_OPTIONS:
+        if re.search(rf"\b{code}\b", text.upper()):
+            return code, STATE_OPTIONS[code]
+    return None, None
+
+
+def lookup_solicitation_organization_hierarchy(extracted_org: str | None) -> tuple[str | None, str | None]:
+    cleaned = " ".join(str(extracted_org or "").strip().split())
+    if not cleaned:
+        return None, None
+    return SOLICITATION_ORGANIZATION_HIERARCHY.get(cleaned.lower(), (None, None))
+
+
+def exact_subagency_hierarchy_match(
+    extracted_org: str | None,
+    agency_records: list[dict],
+    fiscal_year: int,
+) -> dict:
+    cleaned = canonical_bureau_name(extracted_org)
+    attempts: list[dict] = []
+    if not cleaned or cleaned == ALL_BUREAUS:
+        return {"agency": None, "subagency": None, "method": None, "attempts": attempts}
+    target_key = comparable_org_name(cleaned)
+    for agency_record in agency_records:
+        agency_name = agency_record.get("agency_name") or ""
+        bureau_options = solicitation_bureau_options_for_agency(agency_records, agency_name, fiscal_year)
+        exact_matches = [option for option in bureau_options if option != ALL_BUREAUS and option.lower() == cleaned.lower()]
+        attempts.append(
+            {
+                "strategy": "exact_subagency_parent_scan",
+                "candidate": cleaned,
+                "agency": agency_name,
+                "matches": exact_matches,
+            }
+        )
+        if len(exact_matches) == 1:
+            return {
+                "agency": agency_name,
+                "subagency": exact_matches[0],
+                "method": "exact_subagency_parent_scan",
+                "attempts": attempts,
+            }
+        normalized_matches = [
+            option
+            for option in bureau_options
+            if option != ALL_BUREAUS and comparable_org_name(option) == target_key
+        ]
+        attempts.append(
+            {
+                "strategy": "exact_normalized_subagency_parent_scan",
+                "candidate": cleaned,
+                "agency": agency_name,
+                "matches": normalized_matches,
+            }
+        )
+        if len(normalized_matches) == 1:
+            return {
+                "agency": agency_name,
+                "subagency": normalized_matches[0],
+                "method": "exact_normalized_subagency_parent_scan",
+                "attempts": attempts,
+            }
+    return {"agency": None, "subagency": None, "method": None, "attempts": attempts}
+
+
+def validate_solicitation_hierarchy(
+    agency: str | None,
+    subagency: str | None,
+    agency_records: list[dict],
+    fiscal_year: int,
+) -> dict:
+    if not agency or not subagency or subagency == ALL_BUREAUS:
+        return {"valid": True, "reason": ""}
+    bureau_options = solicitation_bureau_options_for_agency(agency_records, agency, fiscal_year)
+    valid = subagency in bureau_options
+    return {
+        "valid": valid,
+        "reason": "" if valid else "selected_subagency.parent_agency != selected_agency",
+    }
+
+
+def solicitation_bureau_options_for_agency(
+    agency_records: list[dict],
+    agency_name: str,
+    fiscal_year: int,
+) -> list[str]:
+    agency_record = agency_record_by_name(agency_records, agency_name)
+    raw_bureau_options = get_bureau_options(agency_record["toptier_code"], int(fiscal_year))
+    return meaningful_bureau_options(agency_record["agency_name"], raw_bureau_options)
+
+
+def match_top_level_agency_to_options(extracted_agency: str, agency_options: list[str]) -> dict:
+    cleaned = " ".join(str(extracted_agency or "").strip().split())
+    attempts: list[dict] = []
+    if not cleaned:
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+        }
+
+    exact_matches = [agency for agency in agency_options if agency.lower() == cleaned.lower()]
+    attempts.append({"strategy": "exact_normalized", "candidate": cleaned, "matches": exact_matches})
+    if len(exact_matches) == 1:
+        return {
+            "filter_option": exact_matches[0],
+            "mapping_status": "Exact match",
+            "preselect": True,
+            "attempts": attempts,
+        }
+    if len(exact_matches) > 1:
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+        }
+
+    alias_target = AGENCY_ALIASES.get(cleaned.lower())
+    if alias_target:
+        alias_matches = [agency for agency in agency_options if agency.lower() == alias_target.lower()]
+        attempts.append({"strategy": "known_alias", "candidate": alias_target, "matches": alias_matches})
+        if len(alias_matches) == 1:
+            return {
+                "filter_option": alias_matches[0],
+                "mapping_status": "Suggested match",
+                "preselect": False,
+                "attempts": attempts,
+            }
+
+    attempts.append(
+        {
+            "strategy": "no_fuzzy_hierarchy_match",
+            "candidate": cleaned,
+            "matches": [],
+            "rejection_reason": "Federal hierarchy matching requires exact name or explicit alias.",
+        }
+    )
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+    }
+
+
+def match_subagency_to_options(target_subagency: str | None, bureau_options: list[str]) -> dict:
+    attempts: list[dict] = []
+    target = canonical_bureau_name(target_subagency)
+    if not target or target == ALL_BUREAUS:
+        if ALL_BUREAUS in bureau_options:
+            return {
+                "filter_option": ALL_BUREAUS,
+                "mapping_status": "Exact match",
+                "preselect": True,
+                "attempts": [{"strategy": "all_bureaus", "candidate": ALL_BUREAUS, "matches": [ALL_BUREAUS]}],
+            }
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+        }
+
+    exact_matches = [option for option in bureau_options if option.lower() == target.lower()]
+    attempts.append({"strategy": "exact_subagency", "candidate": target, "matches": exact_matches})
+    if len(exact_matches) == 1:
+        return {
+            "filter_option": exact_matches[0],
+            "mapping_status": "Exact match",
+            "preselect": True,
+            "attempts": attempts,
+        }
+
+    needle = comparable_org_name(target)
+    normalized_matches = [
+        option
+        for option in bureau_options
+        if option != ALL_BUREAUS
+        and comparable_org_name(option) == needle
+    ]
+    attempts.append({"strategy": "exact_normalized_subagency", "candidate": target, "matches": normalized_matches})
+    if len(normalized_matches) == 1:
+        return {
+            "filter_option": normalized_matches[0],
+            "mapping_status": "Exact match",
+            "preselect": True,
+            "attempts": attempts,
+        }
+    if len(normalized_matches) > 1:
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+        }
+    attempts.append(
+        {
+            "strategy": "no_fuzzy_subagency_match",
+            "candidate": target,
+            "matches": [],
+            "rejection_reason": "Subagency matching requires exact scoped name or explicit hierarchy alias.",
+        }
+    )
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+        "unmapped_extracted_display": target,
+    }
+
+
+def map_contract_type_text(value: object | None) -> tuple[str | None, str | None]:
+    matches = map_contract_type_texts(value)
+    if matches:
+        return matches[0]
+    return None, None
+
+
+def map_contract_type_texts(value: object | None) -> list[tuple[str, str]]:
+    if value is None:
+        return []
+    text = re.sub(r"[^\w\s&/+]", " ", str(value).lower())
+    text = " ".join(text.split())
+    if not text:
+        return []
+    matches: list[tuple[str, str]] = []
+    for alias, code in SOLICITATION_CONTRACT_TYPE_ALIASES.items():
+        if alias in text:
+            pair = (code, CONTRACT_TYPE_OPTIONS.get(code, code))
+            if pair not in matches:
+                matches.append(pair)
+    for code, label in CONTRACT_TYPE_OPTIONS.items():
+        if label.lower() in text or text in label.lower():
+            pair = (code, label)
+            if pair not in matches:
+                matches.append(pair)
+    return matches
+
+
+def contract_type_hybrid_match(value: object | None, contract_type_options: list[str]) -> dict | None:
+    matches = map_contract_type_texts(value)
+    if len(matches) < 2:
+        return None
+    valid_options = []
+    for code, label in matches:
+        option = encode_option(code, label or CONTRACT_TYPE_OPTIONS.get(code, code))
+        if option in contract_type_options:
+            valid_options.append(option)
+    display = "Hybrid T&M / FFP" if {code for code, _label in matches} >= {"Y", "J"} else "Hybrid contract type"
+    return {
+        "filter_option": None,
+        "mapping_status": "Suggested match",
+        "preselect": False,
+        "attempts": [
+            {
+                "strategy": "hybrid_contract_type_alias",
+                "candidate": value,
+                "contract_types": [label for _code, label in matches],
+                "valid_options": valid_options,
+                "requires_analyst_market_treatment": True,
+            }
+        ],
+        "unmapped_extracted_display": f"{display} - select the market treatment",
+        "contract_types": [label for _code, label in matches],
+        "contract_type_options": valid_options,
+        "is_hybrid": True,
+    }
+
+
+def map_set_aside_text(value: object | None) -> tuple[str | None, str | None]:
+    if value is None:
+        return None, None
+    text = str(value).lower()
+    if "8(a)" in text or "8a" in text:
+        return "8A", SET_ASIDE_TYPE_OPTIONS["8A"]
+    if "sdvosb" in text or "service-disabled veteran" in text:
+        return "SDVOSBC", SET_ASIDE_TYPE_OPTIONS["SDVOSBC"]
+    if "wosb" in text or "women-owned" in text:
+        return "WOSB", SET_ASIDE_TYPE_OPTIONS["WOSB"]
+    if "hubzone" in text:
+        return "HZC", SET_ASIDE_TYPE_OPTIONS["HZC"]
+    if "unrestricted" in text or "full and open" in text or "no set aside" in text or "not set aside" in text:
+        return "NONE", SET_ASIDE_TYPE_OPTIONS["NONE"]
+    if "small business set-aside" in text or "small business set aside" in text:
+        return "SBA", SET_ASIDE_TYPE_OPTIONS["SBA"]
+    return None, None
+
+
+def build_solicitation_scope_preview(resolved_signals: dict) -> dict:
+    field_specs = [
+        ("Solicitation Number", ["rfp_solicitation_number_v1", "rfp_solicitation_id_v1"]),
+        ("Title", ["rfp_title_v1"]),
+        ("Issuing Agency", ["rfp_issuing_agency_v1"]),
+        ("Issuing Office", ["rfp_issuing_office_v1"]),
+        ("Office AAC", ["rfp_office_aac_v1"]),
+        ("Funding Office", ["rfp_funding_office_v1", "rfp_funding_office_name_v1"]),
+        ("Primary NAICS", ["rfp_primary_naics_v1"]),
+        ("Primary PSC", ["rfp_primary_psc_v1"]),
+        ("Contract Type", ["rfp_contract_type_v1"]),
+        ("Competition / Set-Aside", ["rfp_set_aside_v1", "rfp_competition_type_v1"]),
+        ("Place of Performance", ["rfp_place_of_performance_v1"]),
+        ("Period of Performance", ["rfp_period_of_performance_v1"]),
+        ("POP Start", ["rfp_pop_start_v1"]),
+        ("POP End", ["rfp_pop_end_v1"]),
+        ("Incumbent Data", ["rfp_incumbent_data_v1"]),
+        ("Description", ["rfp_description_v1"]),
+        ("Primary POC", ["rfp_primary_poc_v1"]),
+        ("Contracting Officer (KO)", ["rfp_ko_name_v1"]),
+        ("Contract Specialist", ["rfp_contract_specialist_name_v1"]),
+    ]
+    preview: dict[str, dict] = {}
+    for field_name, signal_ids in field_specs:
+        if field_name == "Competition / Set-Aside":
+            competition_value, competition_confidence, competition_id, competition_signal = first_signal_value(
+                resolved_signals,
+                ["rfp_competition_type_v1"],
+            )
+            set_aside_value, set_aside_confidence, set_aside_id, set_aside_signal = first_signal_value(
+                resolved_signals,
+                ["rfp_set_aside_v1"],
+            )
+            if set_aside_value is None:
+                set_aside_signal = get_signal(resolved_signals, "rfp_set_aside_v1")
+                set_aside_value = signal_review_model_value(set_aside_signal)
+                if set_aside_value is not None:
+                    set_aside_confidence = (set_aside_signal or {}).get("canonical_confidence")
+                    set_aside_id = "rfp_set_aside_v1"
+            if set_aside_value is None and competition_value is None:
+                continue
+            combined_parts = []
+            if competition_value is not None:
+                combined_parts.append(str(competition_value))
+            if set_aside_value is not None:
+                combined_parts.append(str(set_aside_value))
+            preview[field_name] = {
+                "value": " — ".join(combined_parts),
+                "confidence": set_aside_confidence or competition_confidence,
+                "signal_id": set_aside_id or competition_id,
+                "evidence_snippet": signal_evidence_snippet(set_aside_signal or competition_signal),
+                "evidence_source": signal_evidence_details(set_aside_signal or competition_signal).get("source", ""),
+                "evidence_locator": signal_evidence_details(set_aside_signal or competition_signal).get("locator", ""),
+                "validation_status": (set_aside_signal or competition_signal or {}).get("resolution_status", ""),
+                "set_aside_value": set_aside_value,
+                "competition_value": competition_value,
+            }
+            continue
+
+        value, confidence, signal_id, signal = first_signal_value(resolved_signals, signal_ids)
+        if value is None:
+            continue
+        evidence_details = signal_evidence_details(signal)
+        preview[field_name] = {
+            "value": value,
+            "confidence": confidence,
+            "signal_id": signal_id,
+            "evidence_snippet": signal_evidence_snippet(signal),
+            "evidence_source": evidence_details.get("source", ""),
+            "evidence_locator": evidence_details.get("locator", ""),
+            "validation_status": (signal or {}).get("resolution_status", ""),
+        }
+    return preview
+
+
+def _solicitation_mapping_row(
+    field: str,
+    extracted_value: object | None,
+    *,
+    confidence: str | None = None,
+    evidence_snippet: str = "",
+    evidence_source: str = "",
+    evidence_locator: str = "",
+    validation_status: str = "",
+    filter_key: str | None = None,
+    match: dict | None = None,
+    context_only: bool = False,
+    mapped_filter_display: str | None = None,
+    deterministic_mapping: bool = False,
+) -> dict:
+    match = match or {}
+    row = {
+        "field": field,
+        "extracted_value": extracted_value,
+        "confidence": confidence,
+        "evidence_snippet": evidence_snippet,
+        "evidence_source": evidence_source,
+        "evidence_locator": evidence_locator,
+        "validation_status": validation_status,
+        "mapped_filter": match.get("filter_option"),
+        "mapped_filter_display": mapped_filter_display
+        if mapped_filter_display is not None
+        else (match.get("filter_option") or match.get("unmapped_extracted_display") or ""),
+        "filter_key": filter_key,
+        "mapping_status": "Context only" if context_only else match.get("mapping_status", "Unmapped"),
+        "preselect": False if context_only else match.get("preselect", False),
+        "filter_option": None if context_only else match.get("filter_option"),
+        "unmapped_extracted_display": match.get("unmapped_extracted_display"),
+        "deterministic_mapping": deterministic_mapping,
+        "contract_types": match.get("contract_types"),
+        "contract_type_options": match.get("contract_type_options"),
+        "is_hybrid": bool(match.get("is_hybrid")),
+        "rejection_reason": match.get("rejection_reason"),
+        "contract_type_filter_source": match.get("contract_type_filter_source"),
+    }
+    if context_only or deterministic_mapping:
+        return row
+    return apply_confidence_to_mapping(row)
+
+
+def map_solicitation_organization(
+    scope_preview: dict,
+    agency_records: list[dict],
+    fiscal_year: int,
+) -> dict:
+    agency_options = agency_names_from_records(agency_records)
+    issuing_agency_data = scope_preview.get("Issuing Agency", {})
+    extracted_org = issuing_agency_data.get("value")
+    signal_confidence = issuing_agency_data.get("confidence")
+    evidence_snippet = issuing_agency_data.get("evidence_snippet", "")
+    evidence_source = issuing_agency_data.get("evidence_source", "")
+    evidence_locator = issuing_agency_data.get("evidence_locator", "")
+    validation_status = issuing_agency_data.get("validation_status", "")
+    mapping_attempts: dict[str, list] = {}
+
+    rows: list[dict] = []
+    rows.append(
+        _solicitation_mapping_row(
+        "Extracted Organization",
+        extracted_org,
+        confidence=signal_confidence,
+        evidence_snippet=evidence_snippet,
+        evidence_source=evidence_source,
+        evidence_locator=evidence_locator,
+        validation_status=validation_status,
+        context_only=True,
+    )
+    )
+
+    hierarchy_agency, hierarchy_subagency = lookup_solicitation_organization_hierarchy(
+        str(extracted_org) if extracted_org is not None else None
+    )
+    hierarchy_method = "deterministic_alias" if hierarchy_agency else None
+    subagency_hierarchy = (
+        exact_subagency_hierarchy_match(extracted_org, agency_records, fiscal_year)
+        if not hierarchy_agency
+        else {"agency": None, "subagency": None, "method": None, "attempts": []}
+    )
+    if not hierarchy_agency and subagency_hierarchy.get("agency"):
+        hierarchy_agency = subagency_hierarchy["agency"]
+        hierarchy_subagency = subagency_hierarchy["subagency"]
+        hierarchy_method = subagency_hierarchy["method"]
+    if hierarchy_agency:
+        agency_match = match_top_level_agency_to_options(hierarchy_agency, agency_options)
+        if agency_match.get("filter_option"):
+            agency_match["mapping_status"] = "Exact match"
+            agency_match["preselect"] = True
+        else:
+            agency_match["mapping_status"] = "Suggested match"
+            agency_match["preselect"] = False
+            agency_match["unmapped_extracted_display"] = hierarchy_agency
+        mapping_attempts["Agency"] = [
+            {
+                "strategy": "deterministic_hierarchy",
+                "candidate": hierarchy_agency,
+                "extracted_organization": extracted_org,
+                "matched_hierarchy_level": "subagency" if hierarchy_subagency and hierarchy_subagency != ALL_BUREAUS else "agency",
+                "matched_agency": agency_match.get("filter_option"),
+                "matched_subagency": hierarchy_subagency,
+                "match_method": hierarchy_method,
+                "matches": [agency_match.get("filter_option")] if agency_match.get("filter_option") else [],
+            },
+            *subagency_hierarchy.get("attempts", []),
+            *agency_match.get("attempts", []),
+        ]
+        bureau_options = solicitation_bureau_options_for_agency(
+            agency_records,
+            agency_match.get("filter_option") or hierarchy_agency,
+            fiscal_year,
+        )
+        subagency_match = match_subagency_to_options(hierarchy_subagency, bureau_options)
+        mapping_attempts["Subagency / Bureau"] = subagency_match.get("attempts", [])
+        if subagency_match.get("mapping_status") == "Unmapped":
+            subagency_match["unmapped_extracted_display"] = hierarchy_subagency
+        if hierarchy_subagency and hierarchy_subagency != ALL_BUREAUS:
+            if not subagency_match.get("filter_option"):
+                if hierarchy_method == "deterministic_alias":
+                    subagency_match["filter_option"] = hierarchy_subagency
+                else:
+                    subagency_match["unmapped_extracted_display"] = hierarchy_subagency
+            subagency_match["mapping_status"] = (
+                "Exact match"
+                if subagency_match.get("filter_option")
+                else "Suggested match"
+            )
+            subagency_match["preselect"] = bool(subagency_match.get("filter_option"))
+        hierarchy_validation = validate_solicitation_hierarchy(
+            agency_match.get("filter_option"),
+            subagency_match.get("filter_option"),
+            agency_records,
+            fiscal_year,
+        )
+        if not hierarchy_validation["valid"] and hierarchy_method != "deterministic_alias":
+            subagency_match["mapping_status"] = "Unmapped"
+            subagency_match["preselect"] = False
+            subagency_match["filter_option"] = None
+            subagency_match["rejection_reason"] = hierarchy_validation["reason"]
+            mapping_attempts["Subagency / Bureau"].append(
+                {
+                    "strategy": "hierarchy_validation",
+                    "candidate": hierarchy_subagency,
+                    "matched_agency": agency_match.get("filter_option"),
+                    "matched_subagency": hierarchy_subagency,
+                    "rejection_reason": hierarchy_validation["reason"],
+                }
+            )
+    else:
+        agency_match = match_top_level_agency_to_options(
+            str(extracted_org) if extracted_org is not None else "",
+            agency_options,
+        )
+        if agency_match.get("filter_option") and comparable_org_name(agency_match.get("filter_option")) != comparable_org_name(extracted_org):
+            agency_match["filter_option"] = None
+            agency_match["mapping_status"] = "Unmapped"
+            agency_match["preselect"] = False
+            agency_match["rejection_reason"] = "extracted organization did not exactly match a top-level agency"
+        mapping_attempts["Agency"] = [
+            *subagency_hierarchy.get("attempts", []),
+            *agency_match.get("attempts", []),
+        ]
+        bureau_options = solicitation_bureau_options_for_agency(
+            agency_records,
+            agency_match.get("filter_option") or str(extracted_org or ""),
+            fiscal_year,
+        )
+        subagency_match = {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": [
+                {
+                    "strategy": "no_silent_all_bureaus_fallback",
+                    "candidate": extracted_org,
+                    "matches": [],
+                    "rejection_reason": "specific organization could not be placed in a valid hierarchy",
+                }
+            ],
+        }
+        mapping_attempts["Subagency / Bureau"] = subagency_match.get("attempts", [])
+
+    agency_row = _solicitation_mapping_row(
+        "Agency",
+        hierarchy_agency or extracted_org,
+        confidence=signal_confidence,
+        evidence_snippet=evidence_snippet,
+        evidence_source=evidence_source,
+        evidence_locator=evidence_locator,
+        validation_status=validation_status,
+        filter_key="agency",
+        match=agency_match,
+        deterministic_mapping=bool(hierarchy_agency and agency_match.get("filter_option")),
+    )
+    agency_row["hierarchy_match_level"] = "top_level_agency" if agency_match.get("filter_option") else None
+    subagency_display = (
+        subagency_match["filter_option"]
+        if subagency_match.get("filter_option")
+        else subagency_match.get("unmapped_extracted_display")
+        or hierarchy_subagency
+        or ALL_BUREAUS
+    )
+    subagency_row = _solicitation_mapping_row(
+        "Subagency / Bureau",
+        hierarchy_subagency or extracted_org,
+        confidence=signal_confidence,
+        evidence_snippet=evidence_snippet,
+        evidence_source=evidence_source,
+        evidence_locator=evidence_locator,
+        validation_status=validation_status,
+        filter_key="bureau",
+        match=subagency_match,
+        mapped_filter_display=subagency_display,
+        deterministic_mapping=bool(
+            hierarchy_agency and hierarchy_subagency and subagency_match.get("filter_option")
+        ),
+    )
+    subagency_row["hierarchy_match_level"] = (
+        "subagency" if subagency_match.get("filter_option") and subagency_match.get("filter_option") != ALL_BUREAUS else None
+    )
+    rows.extend([agency_row, subagency_row])
+
+    return {
+        "rows": rows,
+        "mapped_agency": agency_match.get("filter_option"),
+        "mapped_bureau": subagency_match.get("filter_option"),
+        "bureau_options": bureau_options,
+        "mapping_attempts": mapping_attempts,
+        "hierarchy_rule_applied": bool(hierarchy_agency),
+    }
+
+
+def map_solicitation_market_filters(
+    scope_preview: dict,
+    available_filter_options: dict,
+) -> dict:
+    rows: list[dict] = []
+    mapping_attempts: dict[str, list] = {}
+    unavailable_fields = set(available_filter_options.get("mapping_unavailable_fields") or [])
+
+    def mark_unavailable(row: dict, field_name: str, extracted_value: object | None) -> dict:
+        if field_name not in unavailable_fields:
+            return row
+        row["mapping_status"] = SOLICITATION_MAPPING_UNAVAILABLE_STATUS
+        row["preselect"] = False
+        row["filter_option"] = None
+        row["mapped_filter"] = None
+        row["mapped_filter_display"] = str(extracted_value or row.get("unmapped_extracted_display") or "")
+        row["unmapped_extracted_display"] = str(extracted_value or row.get("unmapped_extracted_display") or "")
+        row["mapping_unavailable"] = True
+        return row
+
+    office_aac = scope_preview.get("Office AAC", {}).get("value")
+    issuing_office = scope_preview.get("Issuing Office", {}).get("value")
+    if office_aac or issuing_office:
+        office_match = match_contracting_office_to_options(
+            str(office_aac) if office_aac is not None else None,
+            str(issuing_office) if issuing_office is not None else None,
+            available_filter_options["contracting_offices"],
+        )
+        mapping_attempts["Contracting Office"] = office_match["attempts"]
+        office_row = _solicitation_mapping_row(
+            "Contracting Office",
+            f"{office_aac or ''} / {issuing_office or ''}".strip(" /"),
+            confidence=scope_preview.get("Office AAC", {}).get("confidence")
+            or scope_preview.get("Issuing Office", {}).get("confidence"),
+            evidence_snippet=scope_preview.get("Office AAC", {}).get("evidence_snippet", "")
+            or scope_preview.get("Issuing Office", {}).get("evidence_snippet", ""),
+            evidence_source=scope_preview.get("Office AAC", {}).get("evidence_source", "")
+            or scope_preview.get("Issuing Office", {}).get("evidence_source", ""),
+            evidence_locator=scope_preview.get("Office AAC", {}).get("evidence_locator", "")
+            or scope_preview.get("Issuing Office", {}).get("evidence_locator", ""),
+            validation_status=scope_preview.get("Office AAC", {}).get("validation_status", "")
+            or scope_preview.get("Issuing Office", {}).get("validation_status", ""),
+            filter_key="contracting_office",
+            match=office_match,
+            mapped_filter_display=format_contracting_office_option(office_match["filter_option"])
+            if office_match.get("filter_option")
+            else f"{office_aac or ''} / {issuing_office or ''}".strip(" /"),
+        )
+        office_row = mark_unavailable(office_row, "Contracting Office", f"{office_aac or ''} / {issuing_office or ''}".strip(" /"))
+        rows.append(office_row)
+
+    funding_office_data = scope_preview.get("Funding Office", {})
+    funding_extracted = funding_office_data.get("value")
+    if funding_extracted is not None:
+        funding_code = extract_category_code(funding_extracted)
+        funding_name = clean_office_value(funding_extracted)
+        if funding_code and funding_code == funding_name.upper():
+            funding_name = ""
+        funding_match = match_funding_office_to_options(
+            funding_code,
+            funding_name or str(funding_extracted),
+            available_filter_options.get("funding_offices", [ALL_FUNDING_OFFICES]),
+        )
+        mapping_attempts["Funding Office"] = funding_match.get("attempts", [])
+        funding_display = (
+            format_funding_office_option(funding_match["filter_option"])
+            if funding_match.get("filter_option")
+            else str(funding_extracted)
+        )
+        funding_row = _solicitation_mapping_row(
+                "Funding Office",
+                funding_extracted,
+                confidence=funding_office_data.get("confidence"),
+                evidence_snippet=funding_office_data.get("evidence_snippet", ""),
+                evidence_source=funding_office_data.get("evidence_source", ""),
+                evidence_locator=funding_office_data.get("evidence_locator", ""),
+                validation_status=funding_office_data.get("validation_status", ""),
+                filter_key="funding_office",
+                match=funding_match,
+                mapped_filter_display=funding_display,
+            )
+        rows.append(funding_row)
+
+    market_field_specs = [
+        ("NAICS", "Primary NAICS", "naics_code", "naics", ALL_NAICS_CODES),
+        ("PSC", "Primary PSC", "psc_code", "psc", ALL_PRODUCT_SERVICE_CODES),
+        ("Contract Type", "Contract Type", "contract_type", "contract_types", ALL_CONTRACT_TYPES),
+        ("Set-Aside", "Competition / Set-Aside", "set_aside_type", "set_asides", ALL_SET_ASIDE_TYPES),
+        ("Place of Performance", "Place of Performance", "pop_state", "pop_locations", ALL_POP_LOCATIONS),
+    ]
+    for display_name, preview_key, filter_key, options_key, default_option in market_field_specs:
+        field_data = scope_preview.get(preview_key, {})
+        extracted_value = field_data.get("value")
+        if extracted_value is None and preview_key != "Competition / Set-Aside":
+            continue
+        if preview_key == "Competition / Set-Aside":
+            extracted_value = field_data.get("set_aside_value") or extracted_value
+            if extracted_value is None:
+                continue
+            match = match_set_aside_to_options(extracted_value, available_filter_options[options_key])
+        elif preview_key == "Primary NAICS":
+            match = match_category_option_to_options(extracted_value, available_filter_options[options_key], default_option)
+        elif preview_key == "Primary PSC":
+            match = match_psc_to_options(extracted_value, available_filter_options[options_key], default_option)
+        elif preview_key == "Contract Type":
+            match = match_contract_type_to_options(extracted_value, available_filter_options[options_key])
+        elif preview_key == "Place of Performance":
+            match = match_pop_location_to_options(extracted_value, available_filter_options[options_key])
+        else:
+            continue
+
+        mapping_attempts[display_name] = match.get("attempts", [])
+        display = match.get("extracted_code") or str(extracted_value)
+        mapped_display = (
+            format_code_description_option(match["filter_option"])
+            if match.get("filter_option")
+            else display
+        )
+        if filter_key == "contract_type":
+            mapped_display = match.get("unmapped_extracted_display") or "Select manually"
+        if filter_key == "contracting_office":
+            mapped_display = format_contracting_office_option(match["filter_option"]) if match.get("filter_option") else display
+        if filter_key == "pop_state" and not match.get("filter_option"):
+            mapped_display = str(extracted_value)
+
+        market_row = _solicitation_mapping_row(
+                display_name,
+                extracted_value,
+                confidence=field_data.get("confidence"),
+                evidence_snippet=field_data.get("evidence_snippet", ""),
+                evidence_source=field_data.get("evidence_source", ""),
+                evidence_locator=field_data.get("evidence_locator", ""),
+                validation_status=field_data.get("validation_status", ""),
+                filter_key=filter_key,
+                match=match,
+                mapped_filter_display=mapped_display,
+            )
+        rows.append(mark_unavailable(market_row, display_name, extracted_value))
+
+    context_field_specs = [
+        ("Solicitation Number", "Solicitation Number"),
+        ("Period of Performance", "Period of Performance"),
+        ("POP Start", "POP Start"),
+        ("POP End", "POP End"),
+        ("Incumbent Data", "Incumbent Data"),
+        ("Description", "Description"),
+        ("Primary POC", "Primary POC"),
+        ("Contracting Officer (KO)", "Contracting Officer (KO)"),
+        ("Contract Specialist", "Contract Specialist"),
+    ]
+    context_rows = []
+    for display_name, preview_key in context_field_specs:
+        field_data = scope_preview.get(preview_key, {})
+        if field_data.get("value") is None:
+            continue
+        context_rows.append(
+            _solicitation_mapping_row(
+                display_name,
+                field_data.get("value"),
+                confidence=field_data.get("confidence"),
+                evidence_snippet=field_data.get("evidence_snippet", ""),
+                context_only=True,
+            )
+        )
+
+    return {
+        "rows": rows,
+        "context_rows": context_rows,
+        "mapping_attempts": mapping_attempts,
+    }
+
+
+def match_contracting_office_to_options(
+    office_aac: str | None,
+    issuing_office: str | None,
+    office_options: list[str],
+) -> dict:
+    attempts: list[dict] = []
+    aac = clean_office_value(office_aac).upper()
+    office_name = clean_office_value(issuing_office)
+
+    def _option_parts(option: str) -> tuple[str, str]:
+        code, name = decode_contracting_office(option)
+        if code:
+            return code.upper(), name
+        if " — " in option:
+            left, right = option.split(" — ", 1)
+            return clean_office_value(left).upper(), clean_office_value(right)
+        text = clean_office_value(option)
+        token = text.split()[0] if text else ""
+        if token and re.fullmatch(r"[A-Z0-9]{4,6}", token.upper()):
+            return token.upper(), text
+        return "", text
+
+    def _names_equivalent(extracted: str, option_name: str) -> bool:
+        left = comparable_org_name(extracted)
+        right = comparable_org_name(option_name)
+        if not left or not right:
+            return False
+        if left == right:
+            return True
+        return left in right
+
+    if aac:
+        code_matches = []
+        for option in office_options:
+            if option == ALL_CONTRACTING_OFFICES:
+                continue
+            code, _name = _option_parts(option)
+            if code == aac:
+                code_matches.append(option)
+        attempts.append({"strategy": "office_aac_code", "candidate": aac, "matches": code_matches})
+        if len(code_matches) == 1:
+            return {
+                "filter_option": code_matches[0],
+                "mapping_status": "Exact match",
+                "preselect": True,
+                "attempts": attempts,
+            }
+        if len(code_matches) > 1 and office_name:
+            refined_matches = []
+            for option in code_matches:
+                _code, name = _option_parts(option)
+                if _names_equivalent(office_name, name):
+                    refined_matches.append(option)
+            attempts.append(
+                {
+                    "strategy": "office_aac_code_and_name",
+                    "candidate": f"{aac} / {office_name}",
+                    "matches": refined_matches,
+                }
+            )
+            if len(refined_matches) == 1:
+                return {
+                    "filter_option": refined_matches[0],
+                    "mapping_status": "Exact match",
+                    "preselect": True,
+                    "attempts": attempts,
+                }
+            if len(refined_matches) > 1:
+                return {
+                    "filter_option": refined_matches[0],
+                    "mapping_status": "Suggested match",
+                    "preselect": False,
+                    "attempts": attempts,
+                }
+        if len(code_matches) > 1:
+            return {
+                "filter_option": None,
+                "mapping_status": "Unmapped",
+                "preselect": False,
+                "attempts": attempts,
+                "unmapped_extracted_display": f"{aac} / {office_name}".strip(" /"),
+            }
+
+    if office_name:
+        exact_name_matches = []
+        for option in office_options:
+            if option == ALL_CONTRACTING_OFFICES:
+                continue
+            code, name = _option_parts(option)
+            if aac and code != aac:
+                continue
+            if _names_equivalent(office_name, name):
+                exact_name_matches.append(option)
+        attempts.append(
+            {
+                "strategy": "issuing_office_name_exact",
+                "candidate": office_name,
+                "matches": exact_name_matches,
+            }
+        )
+        if len(exact_name_matches) == 1:
+            return {
+                "filter_option": exact_name_matches[0],
+                "mapping_status": "Exact match",
+                "preselect": True,
+                "attempts": attempts,
+            }
+        if len(exact_name_matches) > 1:
+            return {
+                "filter_option": None,
+                "mapping_status": "Unmapped",
+                "preselect": False,
+                "attempts": attempts,
+                "unmapped_extracted_display": f"{aac} / {office_name}".strip(" /"),
+            }
+
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+        "unmapped_extracted_display": f"{aac} / {office_name}".strip(" /") if (aac or office_name) else "",
+    }
+
+
+def match_funding_office_to_options(
+    office_code: str | None,
+    office_name: str | None,
+    office_options: list[str],
+) -> dict:
+    attempts: list[dict] = []
+    code = clean_office_value(office_code).upper()
+    name = clean_office_value(office_name)
+    extracted_display = " / ".join(part for part in [code, name] if part) or name or code
+
+    if code:
+        code_matches = []
+        for option in office_options:
+            if option == ALL_FUNDING_OFFICES:
+                continue
+            option_code, _option_name = decode_option(option)
+            if option_code and option_code.upper() == code:
+                code_matches.append(option)
+        attempts.append({"strategy": "funding_office_code", "candidate": code, "matches": code_matches})
+        if len(code_matches) == 1:
+            return {
+                "filter_option": code_matches[0],
+                "mapping_status": "Exact match",
+                "preselect": True,
+                "attempts": attempts,
+            }
+
+    if name:
+        normalized_name = comparable_org_name(name)
+        exact_name_matches = []
+        for option in office_options:
+            if option == ALL_FUNDING_OFFICES:
+                continue
+            _option_code, option_name = decode_option(option)
+            if comparable_org_name(option_name) == normalized_name:
+                exact_name_matches.append(option)
+        attempts.append({"strategy": "funding_office_name_exact", "candidate": name, "matches": exact_name_matches})
+        if len(exact_name_matches) == 1:
+            return {
+                "filter_option": exact_name_matches[0],
+                "mapping_status": "Exact match",
+                "preselect": True,
+                "attempts": attempts,
+            }
+
+        fuzzy_matches = []
+        for option in office_options:
+            if option == ALL_FUNDING_OFFICES:
+                continue
+            _option_code, option_name = decode_option(option)
+            option_key = comparable_org_name(option_name)
+            if normalized_name and (normalized_name in option_key or option_key in normalized_name):
+                fuzzy_matches.append(option)
+        attempts.append({"strategy": "funding_office_name_fuzzy", "candidate": name, "matches": fuzzy_matches})
+        if fuzzy_matches:
+            return {
+                "filter_option": fuzzy_matches[0],
+                "mapping_status": "Suggested match",
+                "preselect": False,
+                "attempts": attempts,
+            }
+
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+        "unmapped_extracted_display": extracted_display,
+    }
+
+
+def match_category_option_to_options(
+    extracted_value: object | None,
+    options: list[str],
+    default_option: str,
+) -> dict:
+    code = extract_category_code(extracted_value)
+    attempts = [{"strategy": "exact_code", "candidate": code, "matches": []}]
+    if not code:
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+            "extracted_code": "",
+        }
+    matches = []
+    for option in options:
+        if option == default_option:
+            continue
+        option_code, _label = decode_option(option)
+        if option_code.upper() == code.upper():
+            matches.append(option)
+    attempts[0]["matches"] = matches
+    if len(matches) == 1:
+        return {
+            "filter_option": matches[0],
+            "mapping_status": "Exact match",
+            "preselect": True,
+            "attempts": attempts,
+            "extracted_code": code,
+        }
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+        "extracted_code": code,
+    }
+
+
+def match_contract_type_to_options(extracted_value: object | None, contract_type_options: list[str]) -> dict:
+    matches = map_contract_type_texts(extracted_value)
+    valid_options = [
+        encode_option(code, label or CONTRACT_TYPE_OPTIONS.get(code, code))
+        for code, label in matches
+        if encode_option(code, label or CONTRACT_TYPE_OPTIONS.get(code, code)) in contract_type_options
+    ]
+    attempts = [
+        {
+            "strategy": "contract_type_informational_only",
+            "candidate": extracted_value,
+            "contract_types": [label for _code, label in matches],
+            "valid_options": valid_options,
+            "contract_type_filter_source": None,
+            "rejection_reason": "Contract Type is analyst-controlled and never AI-preselected.",
+        }
+    ]
+    return {
+        "filter_option": None,
+        "mapping_status": "Manual selection required",
+        "preselect": False,
+        "attempts": attempts,
+        "unmapped_extracted_display": "Select manually",
+        "contract_types": [label for _code, label in matches],
+        "contract_type_filter_source": None,
+        "is_hybrid": len(matches) > 1,
+    }
+
+
+def match_set_aside_to_options(extracted_value: object | None, set_aside_options: list[str]) -> dict:
+    code, label = map_set_aside_text(extracted_value)
+    attempts = [{"strategy": "set_aside_alias", "candidate": extracted_value, "code": code, "label": label}]
+    if not code:
+        return {
+            "filter_option": None,
+            "mapping_status": "Unmapped",
+            "preselect": False,
+            "attempts": attempts,
+        }
+    target = encode_option(code, label or SET_ASIDE_TYPE_OPTIONS.get(code, code))
+    if target in set_aside_options:
+        return {
+            "filter_option": target,
+            "mapping_status": "Exact match",
+            "preselect": True,
+            "attempts": attempts,
+        }
+    return {
+        "filter_option": None,
+        "mapping_status": "Unmapped",
+        "preselect": False,
+        "attempts": attempts,
+    }
+
+
+def match_pop_location_to_options(extracted_value: object | None, pop_location_options: list[str]) -> dict:
+    state_code, state_name = parse_pop_state_from_text(extracted_value)
+    attempts = [{"strategy": "parse_us_state", "candidate": extracted_value, "state_code": state_code}]
+    if not state_code:
+        return {
+            "filter_option": None,
+            "mapping_status": "Context only",
+            "preselect": False,
+            "attempts": attempts,
+        }
+    target = encode_option(state_code, state_name or STATE_OPTIONS[state_code])
+    if target in pop_location_options:
+        return {
+            "filter_option": target,
+            "mapping_status": "Suggested match",
+            "preselect": False,
+            "attempts": attempts,
+        }
+    return {
+        "filter_option": None,
+        "mapping_status": "Context only",
+        "preselect": False,
+        "attempts": attempts,
+    }
+
+
+def apply_confidence_to_mapping(row: dict) -> dict:
+    if row.get("deterministic_mapping"):
+        return row
+    confidence = str(row.get("confidence") or "").strip().lower()
+    mapping_status = row.get("mapping_status")
+    if mapping_status in ("Context only", "Unmapped"):
+        row["preselect"] = False
+        return row
+    if confidence == "low":
+        row["preselect"] = False
+        if mapping_status == "Exact match":
+            row["mapping_status"] = "Suggested match"
+    elif confidence == "medium":
+        row["preselect"] = False
+        if mapping_status == "Exact match":
+            row["mapping_status"] = "Suggested match"
+    return row
+
+
+def build_solicitation_available_filter_options(
+    agency_records: list[dict],
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+) -> dict:
+    mapping_started = time.monotonic()
+    deadline = mapping_started + solicitation_mapping_timeout_sec()
+    request_timeout = solicitation_option_request_timeout_sec()
+    stage_events: list[dict] = []
+    unavailable_fields: set[str] = set()
+
+    def record(stage: str, status: str, started_at: float, function: str, exc: Exception | None = None) -> None:
+        stage_events.append(_solicitation_mapping_stage(stage, started_at, status, function=function, exc=exc))
+
+    def default_options() -> dict:
+        return {
+            "naics": [ALL_NAICS_CODES],
+            "psc": [ALL_PRODUCT_SERVICE_CODES],
+            "pop_locations": [ALL_POP_LOCATIONS]
+            + [encode_option(code, name) for code, name in sorted(STATE_OPTIONS.items(), key=lambda item: item[1])],
+            "contracting_offices": [ALL_CONTRACTING_OFFICES],
+            "funding_offices": [ALL_FUNDING_OFFICES],
+        }
+
+    bureau_name = canonical_bureau_name(bureau_name)
+    market_filters = default_market_filters()
+    fallback = default_options()
+    try:
+        started_at = time.time()
+        _check_solicitation_mapping_deadline(deadline, "NAICS option retrieval")
+        naics_options = fetch_category_filter_options(
+            agency_name,
+            bureau_name,
+            int(fiscal_year),
+            "naics",
+            ALL_NAICS_CODES,
+            market_filters=market_filters,
+            request_timeout_sec=request_timeout,
+        )
+        record("NAICS options retrieval", "completed", started_at, "fetch_category_filter_options")
+    except Exception as exc:
+        naics_options = fallback["naics"]
+        unavailable_fields.add("NAICS")
+        record("NAICS options retrieval", "timed_out" if isinstance(exc, TimeoutError) else "failed", started_at, "fetch_category_filter_options", exc)
+    try:
+        started_at = time.time()
+        _check_solicitation_mapping_deadline(deadline, "PSC option retrieval")
+        psc_options = fetch_category_filter_options(
+            agency_name,
+            bureau_name,
+            int(fiscal_year),
+            "psc",
+            ALL_PRODUCT_SERVICE_CODES,
+            market_filters=market_filters,
+            request_timeout_sec=request_timeout,
+        )
+        record("PSC options retrieval", "completed", started_at, "fetch_category_filter_options")
+    except Exception as exc:
+        psc_options = fallback["psc"]
+        unavailable_fields.add("PSC")
+        record("PSC options retrieval", "timed_out" if isinstance(exc, TimeoutError) else "failed", started_at, "fetch_category_filter_options", exc)
+    pop_scope_filters = normalize_market_filters({**market_filters, "pop_state": ALL_POP_LOCATIONS})
+    us_state_options = [
+        encode_option(code, name) for code, name in sorted(STATE_OPTIONS.items(), key=lambda item: item[1])
+    ]
+    try:
+        started_at = time.time()
+        _check_solicitation_mapping_deadline(deadline, "Place of Performance option retrieval")
+        country_options = fetch_pop_country_filter_options(
+            agency_name,
+            bureau_name,
+            int(fiscal_year),
+            ALL_POP_LOCATIONS,
+            market_filters=pop_scope_filters,
+            request_timeout_sec=request_timeout,
+        )
+        record("Place of Performance options retrieval", "completed", started_at, "fetch_pop_country_filter_options")
+    except Exception as exc:
+        country_options = [ALL_POP_LOCATIONS]
+        unavailable_fields.add("Place of Performance")
+        record("Place of Performance options retrieval", "timed_out" if isinstance(exc, TimeoutError) else "failed", started_at, "fetch_pop_country_filter_options", exc)
+    foreign_country_options = [option for option in country_options if option != ALL_POP_LOCATIONS]
+    pop_location_options = [ALL_POP_LOCATIONS] + us_state_options + foreign_country_options
+    contracting_options_key = office_options_scope_key(
+        agency_name,
+        bureau_name,
+        int(fiscal_year),
+        "contracting",
+        ALL_CONTRACTING_OFFICES,
+        market_filters,
+    )
+    office_options_cache = st.session_state.get("transaction_office_options_cache", {})
+    cached_contracting_set = office_options_cache.get(
+        contracting_options_key,
+        {"options": [ALL_CONTRACTING_OFFICES], "stats": {}},
+    )
+    contracting_office_options = cached_contracting_set.get("options") or [ALL_CONTRACTING_OFFICES]
+    if len(contracting_office_options) <= 1:
+        try:
+            started_at = time.time()
+            _check_solicitation_mapping_deadline(deadline, "Contracting Office option retrieval")
+            remaining = max(1.0, min(request_timeout, deadline - time.monotonic()))
+            download_rows = fetch_transaction_download_office_rows(
+                agency_name,
+                bureau_name,
+                int(fiscal_year),
+                market_filters=market_filters,
+                cache_version=APP_CACHE_VERSION,
+                request_timeout_sec=request_timeout,
+                max_elapsed_sec=remaining,
+            )
+            downloaded_contracting_set = scoped_office_option_set(
+                download_rows,
+                "awarding",
+                ALL_CONTRACTING_OFFICES,
+                ALL_CONTRACTING_OFFICES,
+                market_filters,
+            )
+            contracting_office_options = merge_office_option_sets(
+                ALL_CONTRACTING_OFFICES,
+                "awarding",
+                cached_contracting_set,
+                downloaded_contracting_set,
+            ).get("options", [ALL_CONTRACTING_OFFICES])
+            record("Contracting Office options retrieval", "completed", started_at, "fetch_transaction_download_office_rows")
+        except Exception as exc:
+            contracting_office_options = [ALL_CONTRACTING_OFFICES]
+            unavailable_fields.add("Contracting Office")
+            record(
+                "Contracting Office options retrieval",
+                "timed_out" if isinstance(exc, TimeoutError) else "failed",
+                started_at,
+                "fetch_transaction_download_office_rows",
+                exc,
+            )
+
+    funding_options_key = office_options_scope_key(
+        agency_name,
+        bureau_name,
+        int(fiscal_year),
+        "funding",
+        ALL_CONTRACTING_OFFICES,
+        market_filters,
+    )
+    cached_funding_set = office_options_cache.get(
+        funding_options_key,
+        {"options": [ALL_FUNDING_OFFICES], "stats": {}},
+    )
+    funding_office_options = cached_funding_set.get("options") or [ALL_FUNDING_OFFICES]
+
+    return {
+        "agencies": agency_names_from_records(agency_records),
+        "bureaus": solicitation_bureau_options_for_agency(agency_records, agency_name, fiscal_year),
+        "contracting_offices": contracting_office_options,
+        "funding_offices": funding_office_options,
+        "naics": naics_options,
+        "psc": psc_options,
+        "contract_types": default_filter_options()["contract_types"],
+        "set_asides": default_filter_options()["set_asides"],
+        "pop_locations": pop_location_options,
+        "mapping_unavailable_fields": sorted(unavailable_fields),
+        "mapping_diagnostics": {
+            "timeoutSeconds": solicitation_mapping_timeout_sec(),
+            "requestTimeoutSeconds": request_timeout,
+            "elapsedSeconds": round(time.monotonic() - mapping_started, 3),
+            "stageEvents": stage_events,
+        },
+        "scope": {
+            "agency": agency_name,
+            "bureau": bureau_name,
+            "fiscal_year": int(fiscal_year),
+        },
+    }
+
+
+def map_solicitation_signals_to_dashboard_filters(
+    scope_preview: dict,
+    agency_records: list[dict],
+    fiscal_year: int,
+    *,
+    mapped_agency: str | None = None,
+    mapped_bureau: str | None = None,
+) -> dict:
+    organization_mapping = map_solicitation_organization(scope_preview, agency_records, fiscal_year)
+    effective_agency = mapped_agency or organization_mapping.get("mapped_agency")
+    effective_bureau = canonical_bureau_name(mapped_bureau or organization_mapping.get("mapped_bureau"))
+    if not effective_agency:
+        effective_agency = agency_names_from_records(agency_records)[0]
+
+    available_filter_options = build_solicitation_available_filter_options(
+        agency_records,
+        effective_agency,
+        effective_bureau,
+        int(fiscal_year),
+    )
+    market_mapping = map_solicitation_market_filters(scope_preview, available_filter_options)
+
+    rows = [
+        *organization_mapping["rows"],
+        *market_mapping["rows"],
+        *market_mapping["context_rows"],
+    ]
+    mapping_attempts = {
+        **organization_mapping.get("mapping_attempts", {}),
+        **market_mapping.get("mapping_attempts", {}),
+    }
+    pending_filters = {
+        "agency": None,
+        "bureau": None,
+        "contracting_office": None,
+        "market_filters": {},
+    }
+    unmapped_fields = [
+        row["field"]
+        for row in rows
+        if row.get("filter_key") and row.get("mapping_status") in ("Unmapped", "Suggested match")
+        and not row.get("filter_option")
+    ]
+
+    loaded_signal_ids = [field_data.get("signal_id") for field_data in scope_preview.values() if field_data.get("signal_id")]
+    canonical_values = {
+        field_name: field_data.get("value") for field_name, field_data in scope_preview.items()
+    }
+    confidences = {
+        field_name: field_data.get("confidence") for field_name, field_data in scope_preview.items()
+    }
+
+    return {
+        "rows": rows,
+        "pending_filters": pending_filters,
+        "available_filter_options": available_filter_options,
+        "organization_mapping": organization_mapping,
+        "debug": {
+            "loaded_signal_ids": loaded_signal_ids,
+            "canonical_values": canonical_values,
+            "confidences": confidences,
+            "mapping_attempts": mapping_attempts,
+            "mapping_option_scope": available_filter_options.get("scope"),
+            "final_selected_pending_filters": pending_filters,
+            "unmapped_fields": unmapped_fields,
+        },
+    }
+
+
+def degraded_solicitation_mapping_result(
+    scope_preview: dict,
+    agency_records: list[dict],
+    fiscal_year: int,
+    *,
+    mapped_agency: str | None = None,
+    mapped_bureau: str | None = None,
+    reason: str = "Dashboard option matching has not completed.",
+) -> dict:
+    started = time.time()
+    organization_mapping = map_solicitation_organization(scope_preview, agency_records, fiscal_year)
+    effective_agency = mapped_agency or organization_mapping.get("mapped_agency") or agency_names_from_records(agency_records)[0]
+    effective_bureau = canonical_bureau_name(mapped_bureau or organization_mapping.get("mapped_bureau"))
+    defaults = default_filter_options()
+    available_filter_options = {
+        "agencies": agency_names_from_records(agency_records),
+        "bureaus": solicitation_bureau_options_for_agency(agency_records, effective_agency, fiscal_year),
+        "contracting_offices": [ALL_CONTRACTING_OFFICES],
+        "funding_offices": [ALL_FUNDING_OFFICES],
+        "naics": defaults["naics"],
+        "psc": defaults["psc"],
+        "contract_types": defaults["contract_types"],
+        "set_asides": defaults["set_asides"],
+        "pop_locations": [ALL_POP_LOCATIONS]
+        + [encode_option(code, name) for code, name in sorted(STATE_OPTIONS.items())],
+        "mapping_unavailable_fields": ["Contracting Office", "Funding Office", "NAICS", "PSC"],
+        "mapping_diagnostics": {
+            "status": "partial",
+            "reason": reason,
+            "elapsedSeconds": round(time.time() - started, 3),
+            "stageEvents": [
+                _solicitation_mapping_stage(
+                    "Build degraded solicitation review rows",
+                    started,
+                    "completed",
+                    function="degraded_solicitation_mapping_result",
+                )
+            ],
+        },
+        "scope": {
+            "agency": effective_agency,
+            "bureau": effective_bureau,
+            "fiscal_year": int(fiscal_year),
+        },
+    }
+    market_mapping = map_solicitation_market_filters(scope_preview, available_filter_options)
+    rows = [
+        *organization_mapping["rows"],
+        *market_mapping["rows"],
+        *market_mapping["context_rows"],
+    ]
+    return {
+        "rows": rows,
+        "pending_filters": {
+            "agency": None,
+            "bureau": None,
+            "contracting_office": None,
+            "market_filters": {},
+        },
+        "available_filter_options": available_filter_options,
+        "organization_mapping": organization_mapping,
+        "debug": {
+            "mapping_degraded": True,
+            "mapping_failure_reason": reason,
+            "mapping_diagnostics": available_filter_options["mapping_diagnostics"],
+        },
+    }
+
+
+def _auto_pending_filters_from_mapping_rows(rows: list[dict]) -> dict:
+    """Build auto-suggested pending sidebar filters from high-confidence mapping rows only."""
+    pending_sidebar_filters: dict = {
+        "agency": None,
+        "bureau": None,
+        "contracting_office": None,
+        "market_filters": {},
+    }
+    for row in rows:
+        if not row.get("preselect") or not row.get("filter_option"):
+            continue
+        filter_key = row.get("filter_key")
+        if filter_key == "agency":
+            pending_sidebar_filters["agency"] = row["filter_option"]
+        elif filter_key == "bureau":
+            pending_sidebar_filters["bureau"] = row["filter_option"]
+        elif filter_key == "contracting_office":
+            pending_sidebar_filters["contracting_office"] = row["filter_option"]
+        elif filter_key:
+            pending_sidebar_filters["market_filters"][filter_key] = row["filter_option"]
+    return pending_sidebar_filters
+
+
+def apply_solicitation_pending_filters(
+    pending_sidebar_filters: dict,
+    available_filter_options: dict | None = None,
+) -> None:
+    """Apply solicitation mappings to pending sidebar state only.
+
+    Uses active_* session keys, which mirror the sidebar selectors and remain
+    distinct from analyzed_* keys used by the last completed dashboard run.
+    analyzed_* is updated only by mark_analysis_started().
+    """
+    available_filter_options = available_filter_options or {}
+
+    def option_allowed(filter_key: str | None, selected: str | None, field_name: str | None = None) -> bool:
+        if not selected or selected == KEEP_CURRENT_SOLICITATION_FILTER:
+            return False
+        if filter_key == "agency":
+            return selected in available_filter_options.get("agencies", [])
+        if filter_key == "bureau":
+            return selected in available_filter_options.get("bureaus", [])
+        if filter_key == "contracting_office":
+            return selected in available_filter_options.get("contracting_offices", [])
+        if filter_key == "naics_code":
+            return selected in available_filter_options.get("naics", [])
+        if filter_key == "psc_code":
+            return selected in available_filter_options.get("psc", [])
+        if filter_key == "contract_type":
+            return selected in available_filter_options.get("contract_types", [])
+        if filter_key == "set_aside_type":
+            return selected in available_filter_options.get("set_asides", [])
+        if filter_key == "pop_state":
+            return selected in available_filter_options.get("pop_locations", [])
+        if filter_key == "funding_office":
+            return selected in available_filter_options.get("funding_offices", [])
+        return False
+
+    agency = pending_sidebar_filters.get("agency")
+    if option_allowed("agency", agency):
+        st.session_state.active_agency = agency
+
+    bureau = canonical_bureau_name(pending_sidebar_filters.get("bureau"))
+    if option_allowed("bureau", bureau):
+        st.session_state.active_bureau = bureau
+
+    contracting_office = pending_sidebar_filters.get("contracting_office")
+    if option_allowed("contracting_office", contracting_office):
+        st.session_state.active_contracting_office = contracting_office
+
+    market_filters = normalize_market_filters(st.session_state.active_market_filters)
+    for key, value in (pending_sidebar_filters.get("market_filters") or {}).items():
+        if option_allowed(key, value):
+            market_filters[key] = value
+    st.session_state.active_market_filters = market_filters
+    st.session_state.solicitation_last_applied_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    st.session_state.solicitation_last_applied_filters = {
+        "agency": st.session_state.get("active_agency"),
+        "bureau": st.session_state.get("active_bureau"),
+        "fiscal_year": st.session_state.get("active_fiscal_year"),
+        "contracting_office": st.session_state.get("active_contracting_office"),
+        "market_filters": normalize_market_filters(st.session_state.get("active_market_filters")),
+    }
+
+
+def utc_analysis_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def classify_analysis_data_source(*source_labels: str | None) -> str:
+    labels = [str(label or "").strip().lower() for label in source_labels if str(label or "").strip()]
+    if any("fixture" in label or "upload" in label or "file" in label for label in labels):
+        return "uploaded_fixture_or_file"
+    if any("live" in label for label in labels):
+        return "live_usaspending_api"
+    if any("error" in label for label in labels):
+        return "api_error"
+    return "unknown"
+
+
+def build_usaspending_filter_summary(payload: dict | None) -> dict:
+    if not isinstance(payload, dict):
+        return {}
+    filters = payload.get("filters") if isinstance(payload.get("filters"), dict) else {}
+    return {
+        "agencies": filters.get("agencies"),
+        "time_period": filters.get("time_period"),
+        "naics_codes": filters.get("naics_codes"),
+        "psc_codes": filters.get("psc_codes"),
+        "contract_pricing_type_codes": filters.get("contract_pricing_type_codes"),
+        "set_aside_type_codes": filters.get("set_aside_type_codes"),
+        "place_of_performance_locations": filters.get("place_of_performance_locations"),
+        "award_type_codes": filters.get("award_type_codes"),
+        "award_or_idv_flag": filters.get("award_or_idv_flag"),
+    }
+
+
+def solicitation_validation_context() -> dict:
+    context: dict = {}
+    if st.session_state.get("solicitation_resolved_signals"):
+        context["signals_artifact_source"] = st.session_state.get(
+            "solicitation_signals_source",
+            "uploaded_resolved_signals_json",
+        )
+        context["signals_loaded_at"] = st.session_state.get("solicitation_signals_loaded_at")
+        context["signals_run_id"] = st.session_state.get("solicitation_loaded_run_id")
+        context["signals_dev_path"] = st.session_state.get("solicitation_dev_path")
+    if st.session_state.get("solicitation_last_applied_at"):
+        context["solicitation_filters_applied_at"] = st.session_state.get("solicitation_last_applied_at")
+        context["solicitation_filters_applied"] = st.session_state.get("solicitation_last_applied_filters")
+    mapping_result = st.session_state.get("solicitation_mapping_result")
+    if isinstance(mapping_result, dict):
+        context["mapping_option_scope"] = mapping_result.get("debug", {}).get("mapping_option_scope")
+        context["final_selected_pending_filters"] = mapping_result.get("debug", {}).get(
+            "final_selected_pending_filters"
+        )
+    return context
+
+
+def build_analysis_validation_metadata(
+    *,
+    agency: str,
+    bureau: str | None,
+    fiscal_year: int,
+    contracting_office: str | None = None,
+    market_filters: dict | None = None,
+    active_scope_payload: dict | None = None,
+    usaspending_payload_summary: dict | None = None,
+    transaction_row_count: int | None = None,
+    unique_award_count: int | None = None,
+    total_obligations: float | None = None,
+    data_source_labels: list[str] | None = None,
+    analysis_context: str = "dashboard",
+) -> dict:
+    market_filters = normalize_market_filters(market_filters)
+    solicitation_context = solicitation_validation_context()
+    return {
+        "as_of": utc_analysis_timestamp(),
+        "analysis_context": analysis_context,
+        "analysis_run_started_at": st.session_state.get("analysis_run_started_at"),
+        "analysis_run_completed_at": st.session_state.get("analysis_run_completed_at"),
+        "selected_agency": agency,
+        "selected_subagency_bureau": canonical_bureau_name(bureau),
+        "selected_fiscal_year": int(fiscal_year),
+        "selected_fiscal_year_label": fiscal_year_label(int(fiscal_year)),
+        "active_filter_scope": active_scope_payload or active_filter_payload(
+            agency,
+            bureau,
+            int(fiscal_year),
+            market_filters,
+            contracting_office,
+        ),
+        "active_mapped_solicitation_filters": solicitation_context.get("solicitation_filters_applied"),
+        "solicitation_signals_context": {
+            key: value
+            for key, value in solicitation_context.items()
+            if key not in ("solicitation_filters_applied", "final_selected_pending_filters")
+        },
+        "usaspending_filter_summary": usaspending_payload_summary or {},
+        "transaction_row_count": transaction_row_count,
+        "unique_award_count": unique_award_count,
+        "total_obligations_returned": round(float(total_obligations), 2) if total_obligations is not None else None,
+        "data_source": classify_analysis_data_source(*(data_source_labels or [])),
+        "app_cache_version": APP_CACHE_VERSION,
     }
 
 
@@ -1052,7 +3391,7 @@ def default_filter_options() -> dict:
             encode_option(code, label)
             for code, label in sorted(SET_ASIDE_TYPE_OPTIONS.items(), key=lambda item: item[1])
         ],
-        "states": [ALL_POP_STATES],
+        "pop_locations": [ALL_POP_LOCATIONS],
         "offices": [ALL_CONTRACTING_OFFICES],
         "funding_offices": [ALL_FUNDING_OFFICES],
     }
@@ -1062,6 +3401,8 @@ def normalize_market_filters(market_filters: dict | None) -> dict:
     normalized = default_market_filters()
     if isinstance(market_filters, dict):
         normalized.update({key: value for key, value in market_filters.items() if value})
+    if normalized.get("pop_state") == LEGACY_ALL_POP_STATES:
+        normalized["pop_state"] = ALL_POP_LOCATIONS
     return normalized
 
 
@@ -1169,7 +3510,12 @@ def market_filter_labels(market_filters: dict | None, contracting_office: str | 
             if market_filters["funding_office"] == ALL_FUNDING_OFFICES
             else f"Funding Office: {format_funding_office_option(market_filters['funding_office'])}"
         ),
-        "state": option_label(market_filters["pop_state"], ALL_POP_STATES, "All States", "State:"),
+        "place_of_performance": option_label(
+            market_filters["pop_state"],
+            ALL_POP_LOCATIONS,
+            "All Locations",
+            "Place of Performance:",
+        ),
     }
 
 
@@ -1182,7 +3528,7 @@ def has_active_refinements(market_filters: dict | None, contracting_office: str 
             market_filters["psc_code"] != ALL_PRODUCT_SERVICE_CODES,
             market_filters["set_aside_type"] != ALL_SET_ASIDE_TYPES,
             market_filters["funding_office"] != ALL_FUNDING_OFFICES,
-            market_filters["pop_state"] != ALL_POP_STATES,
+            market_filters["pop_state"] not in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES),
             bool(contracting_office and contracting_office != ALL_CONTRACTING_OFFICES),
         ]
     )
@@ -1204,7 +3550,12 @@ def active_filter_payload(
     set_aside_code, set_aside_label = decode_option(market_filters["set_aside_type"])
     contracting_office_code, contracting_office_label = decode_contracting_office(contracting_office)
     funding_office_code, funding_office_label = decode_option(market_filters["funding_office"])
-    state_code, state_label = decode_option(market_filters["pop_state"])
+    pop_code, pop_label = decode_option(market_filters["pop_state"])
+    pop_filter = (
+        {}
+        if pop_code in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES)
+        else build_place_of_performance_location_filter(pop_code)
+    )
     return {
         "agency": agency_name,
         "subagency_bureau": bureau_name or ALL_BUREAUS,
@@ -1230,9 +3581,11 @@ def active_filter_payload(
             "funding_office_code": "" if funding_office_code == ALL_FUNDING_OFFICES else funding_office_code,
             "funding_office_name": funding_office_label or ALL_FUNDING_OFFICES,
         },
-        "place_of_performance_state": {
-            "code": "" if state_code == ALL_POP_STATES else state_code,
-            "label": state_label or ALL_POP_STATES,
+        "place_of_performance": {
+            "code": "" if pop_code in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES) else pop_code,
+            "label": pop_label or ALL_POP_LOCATIONS,
+            "country": pop_filter.get("country", ""),
+            "state": pop_filter.get("state", ""),
         },
     }
 
@@ -1249,6 +3602,70 @@ def reset_active_refinement(refinement_key: str) -> None:
     elif refinement_key in filters:
         filters[refinement_key] = default_market_filters()[refinement_key]
         st.session_state.active_market_filters = filters
+
+
+def _applied_filter_chips(
+    selected_bureau: str | None,
+    selected_market_filters: dict,
+    selected_contracting_office: str,
+) -> list[dict]:
+    labels = market_filter_labels(selected_market_filters, selected_contracting_office)
+    market_filters = normalize_market_filters(selected_market_filters)
+    chips = []
+    if canonical_bureau_name(selected_bureau) != ALL_BUREAUS:
+        chips.append({"key": "bureau", "label": f"Subagency/Bureau: {canonical_bureau_name(selected_bureau)}"})
+    chip_config = [
+        ("contracting_office", selected_contracting_office, ALL_CONTRACTING_OFFICES, labels["contracting_office"]),
+        ("naics_code", market_filters["naics_code"], ALL_NAICS_CODES, labels["naics"]),
+        ("contract_type", market_filters["contract_type"], ALL_CONTRACT_TYPES, labels["contract_type"]),
+        ("psc_code", market_filters["psc_code"], ALL_PRODUCT_SERVICE_CODES, labels["psc"]),
+        ("set_aside_type", market_filters["set_aside_type"], ALL_SET_ASIDE_TYPES, labels["set_aside"]),
+        ("funding_office", market_filters["funding_office"], ALL_FUNDING_OFFICES, labels["funding_office"]),
+        ("pop_state", market_filters["pop_state"], ALL_POP_LOCATIONS, labels["place_of_performance"]),
+    ]
+    for key, value, default_value, label in chip_config:
+        active = value not in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES) if key == "pop_state" else value != default_value
+        if active:
+            chips.append({"key": key, "label": label})
+    return chips
+
+
+def remove_applied_filter_and_rerun(
+    filter_key: str,
+    active_agency: str,
+    selected_bureau: str | None,
+    selected_year: int,
+    selected_market_filters: dict,
+    selected_contracting_office: str,
+) -> None:
+    next_bureau = canonical_bureau_name(selected_bureau)
+    next_contracting_office = selected_contracting_office
+    next_market_filters = normalize_market_filters(selected_market_filters)
+    if filter_key == "bureau":
+        next_bureau = ALL_BUREAUS
+        st.session_state.active_bureau = ALL_BUREAUS
+    elif filter_key == "contracting_office":
+        next_contracting_office = ALL_CONTRACTING_OFFICES
+        st.session_state.active_contracting_office = ALL_CONTRACTING_OFFICES
+        st.session_state.solicitation_comparable_market = False
+    elif filter_key in next_market_filters:
+        next_market_filters[filter_key] = default_market_filters()[filter_key]
+        st.session_state.active_market_filters = next_market_filters
+    else:
+        return
+
+    st.session_state.active_agency = active_agency
+    st.session_state.active_fiscal_year = int(selected_year)
+    st.session_state.active_contracting_office = next_contracting_office
+    st.session_state.active_market_filters = next_market_filters
+    mark_analysis_started(
+        active_agency,
+        next_bureau,
+        int(selected_year),
+        next_contracting_office,
+        next_market_filters,
+    )
+    st.rerun()
 
 
 def format_money(value) -> str:
@@ -1399,9 +3816,9 @@ def contract_award_filters(
     if set_aside_code and set_aside_code != ALL_SET_ASIDE_TYPES:
         filters["set_aside_type_codes"] = [set_aside_code]
 
-    pop_state, _state_description = decode_option(market_filters["pop_state"])
-    if pop_state and pop_state != ALL_POP_STATES:
-        filters["place_of_performance_locations"] = [{"country": "USA", "state": pop_state}]
+    pop_code, _pop_description = decode_option(market_filters["pop_state"])
+    if pop_code and pop_code not in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES):
+        filters["place_of_performance_locations"] = [build_place_of_performance_location_filter(pop_code)]
 
     if time_period:
         filters["time_period"] = time_period
@@ -1623,13 +4040,13 @@ def build_transaction_payload(
     }
 
 
-def post_usaspending(endpoint: str, payload: dict) -> tuple[dict | None, str | None]:
+def post_usaspending(endpoint: str, payload: dict, *, timeout_sec: float = 18) -> tuple[dict | None, str | None]:
     try:
         response = requests.post(
             f"{BASE_URL}{endpoint}",
             json=payload,
             headers=request_headers(),
-            timeout=18,
+            timeout=timeout_sec,
         )
         response.raise_for_status()
         return response.json(), None
@@ -2198,7 +4615,7 @@ def transaction_contract_type_parts(item: dict) -> tuple[str, str]:
     return code, description
 
 
-def transaction_pop_state_parts(item: dict) -> tuple[str, str]:
+def transaction_pop_location_parts(item: dict) -> tuple[str, str]:
     place = first_present(
         item,
         [
@@ -2209,10 +4626,44 @@ def transaction_pop_state_parts(item: dict) -> tuple[str, str]:
         ],
     )
     if isinstance(place, dict):
-        state = clean_office_value(first_present(place, ["state", "state_code"]))
-        state_name = clean_office_value(first_present(place, ["state_name", "name"]))
-        return state, state_name
-    return clean_office_value(first_present(item, ["Place of Performance State Code", "pop_state"])), ""
+        country = clean_office_value(
+            first_present(place, ["country_code", "country", "country_code_alpha3"])
+        ).upper()
+        state = clean_office_value(first_present(place, ["state_code", "state"])).upper()
+        return country, state
+
+    country = clean_office_value(
+        first_present(
+            item,
+            [
+                "Place of Performance Country Code",
+                "place_of_performance_country_code",
+                "pop_country_code",
+                "country_code",
+            ],
+        )
+    ).upper()
+    state = clean_office_value(
+        first_present(
+            item,
+            [
+                "Place of Performance State Code",
+                "place_of_performance_state_code",
+                "pop_state",
+            ],
+        )
+    ).upper()
+    return country, state
+
+
+def transaction_matches_pop_location(item: dict, location_code: str) -> bool:
+    item_country, item_state = transaction_pop_location_parts(item)
+    normalized = str(location_code or "").strip().upper()
+    if is_us_pop_state_code(normalized):
+        if item_state != normalized:
+            return False
+        return not item_country or item_country in ("USA", "US")
+    return item_country == normalized
 
 
 def transaction_matches_market_filters(item: dict, market_filters: dict | None) -> bool:
@@ -2243,10 +4694,9 @@ def transaction_matches_market_filters(item: dict, market_filters: dict | None) 
     if funding_office != ALL_FUNDING_OFFICES and not funding_office_matches(item, funding_office):
         return False
 
-    pop_state, _state_description = decode_option(market_filters["pop_state"])
-    if pop_state and pop_state != ALL_POP_STATES:
-        item_state, _item_state_description = transaction_pop_state_parts(item)
-        if item_state.lower() != pop_state.lower():
+    pop_code, _pop_description = decode_option(market_filters["pop_state"])
+    if pop_code and pop_code not in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES):
+        if not transaction_matches_pop_location(item, pop_code):
             return False
 
     return True
@@ -2904,6 +5354,48 @@ def normalize_category_options(data: dict, default_option: str) -> list[str]:
     )
 
 
+def normalize_pop_country_options(data: dict, default_option: str) -> list[str]:
+    options = {}
+    for item in data.get("results") or []:
+        code = clean_office_value(first_present(item, ["code", "id"])).upper()
+        description = clean_office_value(first_present(item, ["name", "description"]))
+        if not code or code in POP_COUNTRY_OPTION_EXCLUSIONS or is_us_pop_state_code(code):
+            continue
+        options[code] = encode_option(code, description)
+    return [default_option] + sorted(
+        options.values(),
+        key=lambda option: format_code_description_option(option).lower(),
+    )
+
+
+@st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
+def fetch_pop_country_filter_options(
+    agency_name: str,
+    bureau_name: str | None,
+    fiscal_year: int,
+    default_option: str,
+    market_filters: dict | None = None,
+    cache_version: str = APP_CACHE_VERSION,
+    request_timeout_sec: float = 18,
+) -> list[str]:
+    payload = build_category_options_payload(
+        agency_name,
+        bureau_name,
+        fiscal_year,
+        "country",
+        market_filters=market_filters,
+        limit=100,
+    )
+    data, error = post_usaspending(
+        "/api/v2/search/spending_by_category/country/",
+        payload,
+        timeout_sec=request_timeout_sec,
+    )
+    if error or not data:
+        return [default_option]
+    return normalize_pop_country_options(data, default_option)
+
+
 @st.cache_data(ttl=24 * 60 * 60, show_spinner=False)
 def fetch_category_filter_options(
     agency_name: str,
@@ -2913,6 +5405,7 @@ def fetch_category_filter_options(
     default_option: str,
     market_filters: dict | None = None,
     cache_version: str = APP_CACHE_VERSION,
+    request_timeout_sec: float = 18,
 ) -> list[str]:
     payload = build_category_options_payload(
         agency_name,
@@ -2921,7 +5414,11 @@ def fetch_category_filter_options(
         category,
         market_filters=market_filters,
     )
-    data, error = post_usaspending(f"/api/v2/search/spending_by_category/{category}/", payload)
+    data, error = post_usaspending(
+        f"/api/v2/search/spending_by_category/{category}/",
+        payload,
+        timeout_sec=request_timeout_sec,
+    )
     if error or not data:
         return [default_option]
     return normalize_category_options(data, default_option)
@@ -3078,7 +5575,12 @@ def download_status_finished(status_payload: dict) -> bool:
     return str(status_payload.get("status") or "").lower() == "finished"
 
 
-def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[list[dict], dict, str | None]:
+def fetch_transaction_download_rows_with_diagnostics(
+    payload: dict,
+    *,
+    request_timeout_sec: float = 18,
+    max_elapsed_sec: float | None = None,
+) -> tuple[list[dict], dict, str | None]:
     start_time = time.monotonic()
     diagnostic = {
         "endpoint": "/api/v2/download/transactions/",
@@ -3116,7 +5618,7 @@ def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[lis
             f"{BASE_URL}/api/v2/download/transactions/",
             json=payload,
             headers=request_headers(),
-            timeout=18,
+            timeout=request_timeout_sec,
         )
         diagnostic["download_request_submitted"] = True
         diagnostic["submission_http_status"] = response.status_code
@@ -3132,8 +5634,12 @@ def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[lis
     file_url = data.get("file_url")
     if status_url:
         for _attempt in range(30):
+            if max_elapsed_sec is not None and time.monotonic() - start_time > max_elapsed_sec:
+                diagnostic["failure_mode"] = "download_job_timed_out"
+                diagnostic["elapsed_seconds"] = round(time.monotonic() - start_time, 2)
+                return [], diagnostic, "download_job_timed_out"
             try:
-                status_response = requests.get(status_url, headers=request_headers(), timeout=15)
+                status_response = requests.get(status_url, headers=request_headers(), timeout=request_timeout_sec)
                 status_response.raise_for_status()
                 status_payload = status_response.json()
             except (requests.RequestException, ValueError):
@@ -3164,7 +5670,11 @@ def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[lis
         return [], diagnostic, diagnostic["failure_mode"]
 
     try:
-        zip_response = requests.get(file_url, headers=request_headers(), timeout=30)
+        if max_elapsed_sec is not None and time.monotonic() - start_time > max_elapsed_sec:
+            diagnostic["failure_mode"] = "download_job_timed_out"
+            diagnostic["elapsed_seconds"] = round(time.monotonic() - start_time, 2)
+            return [], diagnostic, "download_job_timed_out"
+        zip_response = requests.get(file_url, headers=request_headers(), timeout=request_timeout_sec)
         diagnostic["final_download_url"] = file_url
         diagnostic["download_http_status"] = zip_response.status_code
         diagnostic["download_file_size_bytes"] = len(zip_response.content or b"")
@@ -3200,8 +5710,17 @@ def fetch_transaction_download_rows_with_diagnostics(payload: dict) -> tuple[lis
     return rows, diagnostic, None
 
 
-def fetch_transaction_download_rows_from_payload(payload: dict) -> list[dict]:
-    rows, _diagnostic, _failure_mode = fetch_transaction_download_rows_with_diagnostics(payload)
+def fetch_transaction_download_rows_from_payload(
+    payload: dict,
+    *,
+    request_timeout_sec: float = 18,
+    max_elapsed_sec: float | None = None,
+) -> list[dict]:
+    rows, _diagnostic, _failure_mode = fetch_transaction_download_rows_with_diagnostics(
+        payload,
+        request_timeout_sec=request_timeout_sec,
+        max_elapsed_sec=max_elapsed_sec,
+    )
     return rows
 
 
@@ -3212,6 +5731,8 @@ def fetch_transaction_download_office_rows(
     fiscal_year: int,
     market_filters: dict | None = None,
     cache_version: str = APP_CACHE_VERSION,
+    request_timeout_sec: float = 18,
+    max_elapsed_sec: float | None = None,
 ) -> list[dict]:
     payload = build_transaction_download_office_payload(
         agency_name,
@@ -3219,7 +5740,11 @@ def fetch_transaction_download_office_rows(
         fiscal_year,
         market_filters=market_filters,
     )
-    return fetch_transaction_download_rows_from_payload(payload)
+    return fetch_transaction_download_rows_from_payload(
+        payload,
+        request_timeout_sec=request_timeout_sec,
+        max_elapsed_sec=max_elapsed_sec,
+    )
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -3540,16 +6065,69 @@ def render_analysis_loading_card(
             )
         count_markup = f'<div class="analysis-loading-counts">{"".join(count_tiles)}</div>'
     target.markdown(
+        (
+            '<section class="analysis-loading-card" role="status" aria-live="polite">'
+            f'<p class="analysis-loading-body">{html.escape(body)}</p>'
+            '<div class="analysis-loading-detail">'
+            '<span class="analysis-loading-spinner" aria-hidden="true"></span>'
+            f"<span>{html.escape(detail)}</span>"
+            "</div>"
+            f'<div class="analysis-loading-stage">{stage_markup}</div>'
+            f"{count_markup}"
+            '<div class="analysis-loading-footer">Accuracy first. No estimates - only reconciled USAspending data.</div>'
+            "</section>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_extraction_loading_card(target, progress_detail: dict) -> None:
+    label = str(progress_detail.get("label") or "Extracting solicitation package…")
+    pct = float(progress_detail.get("pct") or 0.0)
+    pct_display = max(0, min(100, int(round(pct * 100))))
+    doc_index = progress_detail.get("docIndex")
+    doc_total = progress_detail.get("docTotal")
+    filename = str(progress_detail.get("filename") or "").strip()
+    phase = str(progress_detail.get("phase") or "").strip()
+
+    if doc_index and doc_total:
+        doc_counter = f"{doc_index} / {doc_total}"
+    else:
+        doc_counter = "—"
+    current_doc = filename or "—"
+    phase_label = {
+        "reading": "Analyzing document",
+        "ocr": "OCR extraction",
+        "corpus": "Package assembly",
+        "gpt": "GPT extraction",
+        "validate": "Evidence validation",
+        "resolve": "Filter mapping",
+        "cache": "Cache reuse",
+    }.get(phase, "Current step")
+
+    target.markdown(
         f"""
-        <section class="analysis-loading-card" role="status" aria-live="polite">
-            <p class="analysis-loading-body">{html.escape(body)}</p>
+        <section class="analysis-loading-card extraction-loading-card" role="status" aria-live="polite">
+            <p class="analysis-loading-body">Extracting market scope from the uploaded solicitation package. Large packages may take 30–60 seconds on the first uncached run.</p>
             <div class="analysis-loading-detail">
                 <span class="analysis-loading-spinner" aria-hidden="true"></span>
-                <span>{html.escape(detail)}</span>
+                <span>{html.escape(label)}</span>
             </div>
-            <div class="analysis-loading-stage">{stage_markup}</div>
-            {count_markup}
-            <div class="analysis-loading-footer">Accuracy first. No estimates — only reconciled USAspending data.</div>
+            <div class="analysis-loading-counts">
+                <div class="analysis-loading-count">
+                    <div class="analysis-loading-count-value">{pct_display}%</div>
+                    <div class="analysis-loading-count-label">Progress</div>
+                </div>
+                <div class="analysis-loading-count">
+                    <div class="analysis-loading-count-value">{html.escape(doc_counter)}</div>
+                    <div class="analysis-loading-count-label">Documents processed</div>
+                </div>
+                <div class="analysis-loading-count">
+                    <div class="analysis-loading-count-value extraction-doc-name">{html.escape(_solicitation_truncate(current_doc, 28) or "—")}</div>
+                    <div class="analysis-loading-count-label">{html.escape(phase_label)}</div>
+                </div>
+            </div>
+            <div class="analysis-loading-footer">Working through each file before the single GPT market-scope request.</div>
         </section>
         """,
         unsafe_allow_html=True,
@@ -3583,7 +6161,7 @@ def render_market_scope_summary(
             labels["set_aside"],
             labels["contracting_office"],
             labels["funding_office"],
-            labels["state"],
+            labels["place_of_performance"],
         ]
     )
     base_chips = [
@@ -3606,24 +6184,31 @@ def render_market_scope_summary(
         unsafe_allow_html=True,
     )
 
+    applied_chips = _applied_filter_chips(selected_bureau, selected_market_filters, selected_contracting_office)
+    if applied_chips:
+        st.markdown('<div class="applied-filter-heading">Applied filters</div>', unsafe_allow_html=True)
+        st.markdown('<div class="applied-filter-chip-row">', unsafe_allow_html=True)
+        for row_start in range(0, len(applied_chips), 3):
+            row = applied_chips[row_start : row_start + 3]
+            columns = st.columns(len(row))
+            for column, chip in zip(columns, row):
+                with column:
+                    if st.button(
+                        f"{chip['label']} ×",
+                        key=f"remove-applied-filter-{chip['key']}",
+                        help=f"Remove {chip['label']}",
+                    ):
+                        remove_applied_filter_and_rerun(
+                            chip["key"],
+                            active_agency,
+                            selected_bureau,
+                            int(selected_year),
+                            selected_market_filters,
+                            selected_contracting_office,
+                        )
+        st.markdown("</div>", unsafe_allow_html=True)
     active_refinements = []
     defaults = []
-    market_filters = normalize_market_filters(selected_market_filters)
-    optional_config = [
-        ("naics_code", ALL_NAICS_CODES, labels["naics"]),
-        ("contract_type", ALL_CONTRACT_TYPES, labels["contract_type"]),
-        ("psc_code", ALL_PRODUCT_SERVICE_CODES, labels["psc"]),
-        ("set_aside_type", ALL_SET_ASIDE_TYPES, labels["set_aside"]),
-        ("contracting_office", ALL_CONTRACTING_OFFICES, labels["contracting_office"]),
-        ("funding_office", ALL_FUNDING_OFFICES, labels["funding_office"]),
-        ("pop_state", ALL_POP_STATES, labels["state"]),
-    ]
-    for key, default_value, label in optional_config:
-        current_value = selected_contracting_office if key == "contracting_office" else market_filters[key]
-        if current_value != default_value:
-            active_refinements.append((key, label))
-        else:
-            defaults.append(label)
 
     if active_refinements:
         st.caption("Active refinements")
@@ -3647,6 +6232,515 @@ def render_market_scope_summary(
         st.markdown(
             f'<div class="other-filters">Other filters: {html.escape(" · ".join(defaults))}</div>',
             unsafe_allow_html=True,
+        )
+
+
+def sentence_list(items: list[str]) -> str:
+    cleaned = [str(item).strip() for item in items if str(item).strip()]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    if len(cleaned) == 2:
+        return f"{cleaned[0]} and {cleaned[1]}"
+    return f"{', '.join(cleaned[:-1])}, and {cleaned[-1]}"
+
+
+SUMMARY_TITLE_CASE_ACRONYMS = {
+    "AI": "AI",
+    "API": "API",
+    "CIO-SP": "CIO-SP",
+    "IDIQ": "IDIQ",
+    "IT": "IT",
+    "NAICS": "NAICS",
+    "O&M": "O&M",
+    "PSC": "PSC",
+    "R&D": "R&D",
+    "SAAS": "SaaS",
+    "USA": "USA",
+}
+SUMMARY_TITLE_CASE_SMALL_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "but",
+    "by",
+    "for",
+    "from",
+    "in",
+    "nor",
+    "of",
+    "on",
+    "or",
+    "per",
+    "the",
+    "to",
+    "with",
+}
+
+
+def summary_title_case_token(token: str, word_index: int, word_count: int) -> str:
+    if not token:
+        return token
+    if "/" in token:
+        return "/".join(
+            summary_title_case_token(part, word_index, word_count)
+            for part in token.split("/")
+        )
+    if "-" in token and token != "-":
+        return "-".join(
+            summary_title_case_token(part, word_index, word_count)
+            for part in token.split("-")
+        )
+    prefix_match = re.match(r"^[^A-Za-z0-9&]+", token)
+    suffix_match = re.search(r"[^A-Za-z0-9&]+$", token)
+    prefix = prefix_match.group(0) if prefix_match else ""
+    suffix = suffix_match.group(0) if suffix_match else ""
+    core_start = len(prefix)
+    core_end = len(token) - len(suffix) if suffix else len(token)
+    core = token[core_start:core_end]
+    if not core:
+        return token
+    normalized = core.upper()
+    if normalized in SUMMARY_TITLE_CASE_ACRONYMS:
+        cased = SUMMARY_TITLE_CASE_ACRONYMS[normalized]
+    elif 0 < word_index < word_count - 1 and core in SUMMARY_TITLE_CASE_SMALL_WORDS:
+        cased = core
+    else:
+        cased = core.capitalize()
+    return f"{prefix}{cased}{suffix}"
+
+
+def summary_title_case_description(description: str) -> str:
+    text = clean_office_value(description)
+    if not text:
+        return ""
+    words = re.split(r"(\s+)", text.lower())
+    cased_words = []
+    word_index = 0
+    word_count = sum(1 for token in words if token.strip())
+    for token in words:
+        if not token.strip():
+            cased_words.append(token)
+            continue
+        cased_words.append(summary_title_case_token(token, word_index, word_count))
+        word_index += 1
+    return "".join(cased_words)
+
+
+def market_summary_active_refinements(
+    selected_market_filters: dict,
+    selected_contracting_office: str,
+) -> list[str]:
+    labels = market_filter_labels(selected_market_filters, selected_contracting_office)
+    market_filters = normalize_market_filters(selected_market_filters)
+    refinements = []
+    refinement_config = [
+        ("naics_code", ALL_NAICS_CODES, labels["naics"]),
+        ("contract_type", ALL_CONTRACT_TYPES, labels["contract_type"]),
+        ("psc_code", ALL_PRODUCT_SERVICE_CODES, labels["psc"]),
+        ("set_aside_type", ALL_SET_ASIDE_TYPES, labels["set_aside"]),
+        ("contracting_office", ALL_CONTRACTING_OFFICES, labels["contracting_office"]),
+        ("funding_office", ALL_FUNDING_OFFICES, labels["funding_office"]),
+        ("pop_state", ALL_POP_LOCATIONS, labels["place_of_performance"]),
+    ]
+    for key, default_value, label in refinement_config:
+        value = selected_contracting_office if key == "contracting_office" else market_filters[key]
+        if value != default_value:
+            refinements.append(label)
+    return refinements
+
+
+def lane_summary_record(df: pd.DataFrame, code_column: str) -> dict:
+    if df.empty:
+        return {}
+    top_row = df.iloc[0]
+    code = clean_office_value(top_row.get(code_column)) or "Unspecified"
+    description = clean_office_value(top_row.get("Full Description")) or "Unspecified"
+    amount = float(pd.to_numeric(pd.Series([top_row.get("Obligated")]), errors="coerce").fillna(0).iloc[0])
+    percentage = float(top_row.get("% of Scope") or 0.0)
+    if code == "Unspecified" and description == "Unspecified":
+        return {}
+    return {
+        "code": code,
+        "description": description,
+        "summary_description": summary_title_case_description(description),
+        "amount": amount,
+        "percentage": percentage,
+    }
+
+
+def market_summary_top_awards(award_df: pd.DataFrame, limit: int = 3) -> list[dict]:
+    if award_df.empty:
+        return []
+    sorted_df = sorted_award_drilldown_dataframe(award_df, "Obligations This Period")
+    records = []
+    for row in sorted_df.head(limit).to_dict("records"):
+        records.append(
+            {
+                "award_id": clean_office_value(row.get("Award ID")) or "Unavailable",
+                "contractor": clean_office_value(row.get("Contractor")) or "Unknown Contractor",
+                "obligations": float(row.get("Obligations This Period") or 0.0),
+                "current_award_value": float(row.get("Current Award Value") or 0.0),
+                "award_ceiling": float(row.get("Award Ceiling") or 0.0),
+            }
+        )
+    return records
+
+
+def market_summary_negative_obligations(negative_transaction_df: pd.DataFrame, limit: int = 3) -> list[dict]:
+    if negative_transaction_df.empty:
+        return []
+    grouped = (
+        negative_transaction_df.groupby("Contractor Name", as_index=False)["Obligation Amount"]
+        .sum()
+        .sort_values("Obligation Amount", ascending=True)
+        .head(limit)
+    )
+    return [
+        {
+            "contractor": clean_office_value(row.get("Contractor Name")) or "Unknown Contractor",
+            "amount": float(row.get("Obligation Amount") or 0.0),
+        }
+        for row in grouped.to_dict("records")
+    ]
+
+
+def build_market_summary(
+    active_agency: str,
+    selected_bureau: str | None,
+    selected_year: int,
+    selected_contracting_office: str,
+    selected_market_filters: dict,
+    current_total: float,
+    vendor_df: pd.DataFrame,
+    award_totals: dict,
+    award_scope_error: bool,
+    market_concentration: dict,
+    market_concentration_debug: dict,
+    transaction_df: pd.DataFrame,
+    award_drilldown_df: pd.DataFrame,
+    negative_transaction_df: pd.DataFrame,
+    negative_obligation_total: float,
+) -> tuple[str, dict]:
+    selected_bureau = canonical_bureau_name(selected_bureau)
+    selected_market_filters = normalize_market_filters(selected_market_filters)
+    fiscal_label = fiscal_year_label(int(selected_year))
+    scope_line = f"{active_agency} / {selected_bureau} / {fiscal_label}"
+    active_refinements = market_summary_active_refinements(selected_market_filters, selected_contracting_office)
+    zero_result = abs(float(current_total or 0.0)) < 0.005
+    grouped_contractor_count = int(market_concentration_debug.get("grouped_contractor_count") or 0)
+    contractors_shown = int(len(vendor_df)) if not vendor_df.empty else 0
+    unique_awards = int(award_totals.get("award_count") or 0)
+    top_share = market_concentration_debug.get("concentration_percentage")
+    top_share_value = float(top_share) if top_share is not None else None
+    top_contractors = [
+        {
+            "recipient": clean_office_value(row.get("recipient")) or "Unknown Contractor",
+            "amount": float(row.get("amount") or 0.0),
+        }
+        for row in vendor_df.head(5).to_dict("records")
+    ] if not vendor_df.empty else []
+
+    naics_df, naics_debug = market_lane_mix_dataframe(transaction_df, "naics", current_total, selected_market_filters)
+    psc_df, psc_debug = market_lane_mix_dataframe(transaction_df, "psc", current_total, selected_market_filters)
+    top_naics = lane_summary_record(naics_df, "NAICS")
+    top_psc = lane_summary_record(psc_df, "PSC")
+    selected_naics_code, selected_naics_label = decode_option(selected_market_filters["naics_code"])
+    selected_psc_code, selected_psc_label = decode_option(selected_market_filters["psc_code"])
+    selected_naics_active = bool(selected_naics_code and selected_naics_code != ALL_NAICS_CODES)
+    selected_psc_active = bool(selected_psc_code and selected_psc_code != ALL_PRODUCT_SERVICE_CODES)
+    top_awards = market_summary_top_awards(award_drilldown_df)
+    negative_records = market_summary_negative_obligations(negative_transaction_df)
+
+    source_note = "Source note: Summary reflects the selected contract-focused USAspending scope."
+    paragraphs = [f"Market Summary: {scope_line}"]
+    if active_refinements:
+        paragraphs.append(f"Filters: {'; '.join(active_refinements)}")
+
+    if zero_result:
+        paragraphs.append(
+            f"Contract Market Snapshot: No {fiscal_label} prime contract obligations were found for this selected scope. "
+            "USAspending may still show grants or assistance awards outside this contract-focused view."
+        )
+        paragraphs.append(
+            "Competitive Concentration: No contractor concentration was calculated because no prime contract obligations were found."
+        )
+        paragraphs.append("Market Lane: NAICS/PSC mix was not available from returned transaction rows for this scope.")
+        paragraphs.append("Award Activity: No top contract awards were identified in this selected FY scope.")
+        paragraphs.append("Negative Obligation / De-obligation Signal: No negative obligations were identified in this selected FY scope.")
+        paragraphs.append(
+            "Capture Takeaway: Broaden the scope to All Bureaus or remove refinements to identify adjacent contract opportunities."
+        )
+    else:
+        contractor_phrase = f"The dashboard displays the top {format_count(contractors_shown)} contractors"
+        if grouped_contractor_count:
+            contractor_phrase += (
+                f", with {format_count(grouped_contractor_count)} total grouped contractors identified in this scope"
+            )
+        contractor_phrase += "."
+        if award_scope_error:
+            award_scope_sentence = "Award ceiling, current award value, and remaining ceiling were unavailable for this scope."
+            source_note = (
+                "Source note: Summary is generated from USAspending prime contract transaction data for the selected scope. "
+                "Award value fields were unavailable for this scope."
+            )
+        else:
+            award_scope_sentence = (
+                f"Active award ceiling totals {format_money(award_totals.get('active_award_ceiling'))}, "
+                f"with {format_money(award_totals.get('current_award_value'))} in current award value and "
+                f"{format_money(award_totals.get('remaining_ceiling'))} in remaining ceiling."
+            )
+            source_note = (
+                "Source note: Summary is generated from USAspending prime contract transaction and award value data "
+                "for the selected scope."
+            )
+        paragraphs.append(
+            f"Contract Market Snapshot: {active_agency} has obligated {format_money(current_total)} in {fiscal_label} prime contract awards "
+            f"across {format_count(unique_awards)} unique awards. {contractor_phrase} {award_scope_sentence}"
+        )
+
+        if grouped_contractor_count == 1 and top_contractors:
+            paragraphs.append(
+                f"Competitive Concentration: This is a single-vendor filtered scope: {top_contractors[0]['recipient']} accounts for 100.0% of positive obligations."
+            )
+        elif top_share_value is not None and top_share_value >= 70:
+            paragraphs.append(
+                f"Competitive Concentration: This is a highly concentrated market: the top 5 contractors captured {top_share_value:.1f}% of positive obligations in this scope."
+            )
+        elif top_share_value is not None and top_share_value >= 40:
+            paragraphs.append(
+                f"Competitive Concentration: This market has moderate concentration: the top 5 contractors captured {top_share_value:.1f}% of positive obligations in this scope."
+            )
+        elif top_share_value is not None:
+            paragraphs.append(
+                f"Competitive Concentration: This market appears fragmented: the top 5 contractors captured only {top_share_value:.1f}% of positive obligations in this scope."
+            )
+
+        if top_contractors:
+            contractor_items = [
+                f"{record['recipient']} ({format_money(record['amount'])})"
+                for record in top_contractors
+            ]
+            paragraphs.append(
+                f"Top Contractors: Top contractors by {fiscal_label} obligations include {sentence_list(contractor_items)}."
+            )
+
+        lane_sentences = []
+        if selected_naics_active:
+            selected_label = summary_title_case_description(selected_naics_label) or selected_naics_code
+            lane_sentences.append(f"This view is narrowed to NAICS {selected_naics_code} — {selected_label}.")
+        elif top_naics:
+            lane_sentences.append(
+                f"The leading NAICS lane is {top_naics['code']} — {top_naics['summary_description']}, "
+                f"representing {format_money(top_naics['amount'])} and {top_naics['percentage']:.1f}% of the selected scope."
+            )
+        if selected_psc_active:
+            selected_label = summary_title_case_description(selected_psc_label) or selected_psc_code
+            lane_sentences.append(f"This view is narrowed to PSC {selected_psc_code} — {selected_label}.")
+        elif top_psc:
+            lane_sentences.append(
+                f"The leading PSC is {top_psc['code']} — {top_psc['summary_description']}, "
+                f"representing {format_money(top_psc['amount'])} and {top_psc['percentage']:.1f}% of the selected scope."
+            )
+        if lane_sentences:
+            paragraphs.append(f"Market Lane: {' '.join(lane_sentences)}")
+        else:
+            paragraphs.append("Market Lane: NAICS/PSC mix was not available from returned transaction rows for this scope.")
+
+        if top_awards:
+            award_items = [
+                (
+                    f"{record['award_id']} to {record['contractor']} "
+                    f"({format_money(record['obligations'])} obligated this period; "
+                    f"{format_money(record['current_award_value'])} current value; "
+                    f"{format_money(record['award_ceiling'])} ceiling)"
+                )
+                for record in top_awards
+            ]
+            paragraphs.append(
+                f"Award Activity: The largest awards driving this scope include {sentence_list(award_items)}. "
+                "These awards should be reviewed first when assessing incumbent positioning, contract vehicles, and recompete context."
+            )
+        else:
+            paragraphs.append("Award Activity: No top contract awards were identified in this selected FY scope.")
+
+        if negative_obligation_total < -0.005:
+            negative_items = [
+                f"{record['contractor']} ({format_money(record['amount'])})"
+                for record in negative_records
+            ]
+            paragraphs.append(
+                f"Negative Obligation / De-obligation Signal: The scope also includes {format_money(negative_obligation_total)} "
+                "in negative obligations/de-obligations"
+                + (f", led by {sentence_list(negative_items)}. " if negative_items else ". ")
+                + "Negative obligations may reflect de-obligations, funding adjustments, closeouts, or scope changes and should be reviewed at the award level before drawing conclusions."
+            )
+        else:
+            paragraphs.append(
+                "Negative Obligation / De-obligation Signal: No negative obligations were identified in this selected FY scope."
+            )
+
+        takeaway_sentences = []
+        if grouped_contractor_count == 1:
+            takeaway_sentences.append(
+                "Capture Takeaway: This is a narrow single-vendor filtered scope. Review the award details before drawing broader market conclusions."
+            )
+        elif top_share_value is not None and top_share_value >= 70:
+            takeaway_sentences.append(
+                "Capture Takeaway: This appears to be a concentrated market with strong incumbent presence. New entrants should study the top contractors, award vehicles, and major active awards before pursuing this lane."
+            )
+        elif top_share_value is not None and top_share_value >= 40:
+            takeaway_sentences.append(
+                "Capture Takeaway: This market has moderate concentration, suggesting meaningful incumbent presence but room for competition."
+            )
+        else:
+            takeaway_sentences.append(
+                "Capture Takeaway: This market appears fragmented, which may create more room for challengers or niche vendors."
+            )
+        if float(award_totals.get("remaining_ceiling") or 0.0) > 0 and not award_scope_error:
+            takeaway_sentences.append(
+                "Remaining ceiling should be interpreted as active award capacity, not reported future obligations."
+            )
+        paragraphs.append(" ".join(takeaway_sentences))
+
+    paragraphs.append(source_note)
+
+    concentration_classification = "zero-result"
+    if not zero_result:
+        if grouped_contractor_count == 1:
+            concentration_classification = "single-vendor"
+        elif top_share_value is not None and top_share_value >= 70:
+            concentration_classification = "highly concentrated"
+        elif top_share_value is not None and top_share_value >= 40:
+            concentration_classification = "moderately concentrated"
+        else:
+            concentration_classification = "fragmented"
+    summary_debug = {
+        "active_scope_used": {
+            "agency": active_agency,
+            "bureau": selected_bureau,
+            "fiscal_year": fiscal_label,
+            "contracting_office": selected_contracting_office,
+            "market_filters": selected_market_filters,
+            "active_refinements": active_refinements,
+        },
+        "kpi_values_used": {
+            "fy_obligations": round(float(current_total or 0.0), 2),
+            "contractors_shown": contractors_shown,
+            "grouped_contractors": grouped_contractor_count,
+            "unique_awards": unique_awards,
+            "active_award_ceiling": round(float(award_totals.get("active_award_ceiling") or 0.0), 2),
+            "current_award_value": round(float(award_totals.get("current_award_value") or 0.0), 2),
+            "remaining_ceiling": round(float(award_totals.get("remaining_ceiling") or 0.0), 2),
+            "award_scope_error": bool(award_scope_error),
+        },
+        "contractor_list_used": top_contractors,
+        "naics_psc_values_used": {
+            "top_naics": top_naics,
+            "top_psc": top_psc,
+            "naics_debug": naics_debug,
+            "psc_debug": psc_debug,
+        },
+        "top_awards_used": top_awards,
+        "negative_obligation_values_used": {
+            "total": round(float(negative_obligation_total or 0.0), 2),
+            "top_negative_contractors": negative_records,
+        },
+        "concentration_classification": concentration_classification,
+        "market_concentration": market_concentration,
+        "market_concentration_debug": market_concentration_debug,
+        "zero_result_flag": zero_result,
+    }
+    return "\n\n".join(paragraphs), summary_debug
+
+
+def filename_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+    return slug or "market"
+
+
+def render_market_summary_controls(
+    summary_text: str,
+    scope_key: str,
+    active_agency: str,
+    selected_year: int,
+) -> None:
+    generated = st.session_state.get("market_summary_visible_scope_key") == scope_key
+    fiscal_slug = filename_slug(fiscal_year_label(int(selected_year)).replace(" ", "_"))
+    agency_slug = filename_slug(active_agency)
+    file_name = f"{agency_slug}_{fiscal_slug}_market_summary.txt"
+    st.markdown(
+        """
+        <section class="market-summary-panel">
+            <div class="market-summary-title">Copy Market Summary</div>
+            <div class="market-summary-helper">Summary reflects the last applied analysis.</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+    button_cols = st.columns([1, 1, 2.2])
+    with button_cols[0]:
+        if st.button("Generate Market Summary", key=f"generate-market-summary-{scope_key}", use_container_width=True):
+            st.session_state.market_summary_visible_scope_key = scope_key
+            generated = True
+    with button_cols[1]:
+        st.download_button(
+            "Download Summary TXT",
+            data=(summary_text if generated else "").encode("utf-8"),
+            file_name=file_name,
+            mime="text/plain",
+            key=f"download-market-summary-{scope_key}",
+            use_container_width=True,
+            disabled=not generated,
+        )
+    if generated:
+        with st.expander("Market Summary", expanded=False):
+            st.caption("Ready to copy.")
+            st.text_area(
+                "Market Summary — ready to copy",
+                value=summary_text,
+                height=260,
+                key=f"market-summary-text-{scope_key}",
+            )
+    else:
+        st.caption("Generate the summary to preview or download the copy-ready brief.")
+
+
+def render_award_scope_diagnostic_probe() -> None:
+    st.markdown("Award Scope Diagnostic Probe")
+    st.caption("Runs the same award-scope function as the dashboard for NASA FY2026, bypassing cached rows.")
+    if st.button("Run NASA FY2026 Award Scope Probe", key="run-nasa-award-scope-probe"):
+        probe_start = time.monotonic()
+        probe_df, probe_payload, probe_error = fetch_award_scope_from_download(
+            DEFAULT_AGENCY_NAME,
+            ALL_BUREAUS,
+            current_fiscal_year(),
+            contracting_office=ALL_CONTRACTING_OFFICES,
+            market_filters=default_market_filters(),
+            bypass_cache=True,
+        )
+        probe_totals = award_scope_totals(probe_df)
+        probe_debug = probe_payload.get("award_scope_debug", {})
+        st.json(
+            {
+                "failure_mode": probe_error,
+                "raw_rows_returned": probe_debug.get("raw_transaction_rows_returned"),
+                "unique_award_keys": probe_debug.get("unique_awards_deduped"),
+                "non_null_potential_value_count": probe_debug.get(
+                    "count_non_null_potential_total_value_of_award"
+                ),
+                "non_null_current_value_count": probe_debug.get(
+                    "count_non_null_current_total_value_of_award"
+                ),
+                "active_award_ceiling_total": round(probe_totals["active_award_ceiling"], 2),
+                "current_award_value_total": round(probe_totals["current_award_value"], 2),
+                "remaining_ceiling_total": round(probe_totals["remaining_ceiling"], 2),
+                "elapsed_seconds": round(time.monotonic() - probe_start, 2),
+                "diagnostic": probe_debug,
+            }
         )
 
 
@@ -4021,21 +7115,158 @@ def transaction_vendor_dataframe(transaction_df: pd.DataFrame) -> pd.DataFrame:
     return vendor_df.sort_values("amount", ascending=False).head(10)
 
 
+MARKET_CONCENTRATION_SEGMENT_COLORS = (
+    "#2dd4bf",
+    "#38bdf8",
+    "#a78bfa",
+    "#f59e0b",
+    "#fb7185",
+    "#64748b",
+)
+
+
+def calculate_market_concentration(
+    filtered_transactions: pd.DataFrame,
+    *,
+    contractor_key_col: str,
+    obligation_col: str = "Obligation Amount",
+    top_n: int = 5,
+) -> dict:
+    if (
+        filtered_transactions is None
+        or filtered_transactions.empty
+        or contractor_key_col not in filtered_transactions.columns
+        or obligation_col not in filtered_transactions.columns
+    ):
+        return {
+            "metric": f"top_{top_n}_positive_obligation_share",
+            "net_obligations": 0.0,
+            "positive_obligations": 0.0,
+            "negative_obligations": 0.0,
+            "top_n_positive_obligations": 0.0,
+            "top_n_share": None,
+            "contractor_breakdown": [],
+            "contractor_count_positive": 0,
+            "calculation_basis": "positive_transaction_obligations",
+            "legacy_top_n_net_obligations": 0.0,
+            "legacy_net_denominator": 0.0,
+            "legacy_net_denominator_share": None,
+        }
+
+    working_df = filtered_transactions.copy()
+    working_df[obligation_col] = pd.to_numeric(working_df[obligation_col], errors="coerce").fillna(0.0)
+    net_obligations = float(working_df[obligation_col].sum())
+    positive_rows = working_df[working_df[obligation_col] > 0].copy()
+    negative_obligations = float(working_df.loc[working_df[obligation_col] < 0, obligation_col].sum())
+    positive_obligations = float(positive_rows[obligation_col].sum())
+
+    legacy_grouped = (
+        working_df.groupby(contractor_key_col, dropna=False, as_index=False)[obligation_col]
+        .sum()
+        .rename(columns={contractor_key_col: "contractor", obligation_col: "amount"})
+    )
+    legacy_grouped = legacy_grouped[
+        pd.to_numeric(legacy_grouped["amount"], errors="coerce").fillna(0.0).abs() >= 0.005
+    ]
+    legacy_grouped = legacy_grouped.sort_values("amount", ascending=False).reset_index(drop=True)
+    legacy_top_n_net_obligations = float(
+        pd.to_numeric(legacy_grouped.head(top_n)["amount"], errors="coerce").fillna(0.0).sum()
+    )
+    legacy_net_denominator_share = (
+        legacy_top_n_net_obligations / net_obligations if abs(net_obligations) >= 0.005 else None
+    )
+
+    if positive_obligations <= 0:
+        return {
+            "metric": f"top_{top_n}_positive_obligation_share",
+            "net_obligations": net_obligations,
+            "positive_obligations": positive_obligations,
+            "negative_obligations": negative_obligations,
+            "top_n_positive_obligations": 0.0,
+            "top_n_share": None,
+            "contractor_breakdown": [],
+            "contractor_count_positive": 0,
+            "calculation_basis": "positive_transaction_obligations",
+            "legacy_top_n_net_obligations": legacy_top_n_net_obligations,
+            "legacy_net_denominator": net_obligations,
+            "legacy_net_denominator_share": legacy_net_denominator_share,
+        }
+
+    positive_contractor_totals = (
+        positive_rows.groupby(contractor_key_col, dropna=False, as_index=False)[obligation_col]
+        .sum()
+        .rename(columns={contractor_key_col: "contractor", obligation_col: "amount"})
+    )
+    positive_contractor_totals = positive_contractor_totals[
+        pd.to_numeric(positive_contractor_totals["amount"], errors="coerce").fillna(0.0) > 0.005
+    ]
+    positive_contractor_totals = positive_contractor_totals.sort_values("amount", ascending=False).reset_index(drop=True)
+    top_positive_contractors = positive_contractor_totals.head(top_n)
+    top_n_positive_obligations = float(
+        pd.to_numeric(top_positive_contractors["amount"], errors="coerce").fillna(0.0).sum()
+    )
+    top_n_share = top_n_positive_obligations / positive_obligations
+    contractor_breakdown = [
+        {
+            "contractor": clean_office_value(row.get("contractor")) or "Unknown Contractor",
+            "amount": float(row.get("amount") or 0.0),
+            "share": float(row.get("amount") or 0.0) / positive_obligations,
+        }
+        for row in top_positive_contractors.to_dict("records")
+    ]
+    return {
+        "metric": f"top_{top_n}_positive_obligation_share",
+        "net_obligations": net_obligations,
+        "positive_obligations": positive_obligations,
+        "negative_obligations": negative_obligations,
+        "top_n_positive_obligations": top_n_positive_obligations,
+        "top_n_share": top_n_share,
+        "contractor_breakdown": contractor_breakdown,
+        "contractor_count_positive": int(len(positive_contractor_totals)),
+        "calculation_basis": "positive_transaction_obligations",
+        "legacy_top_n_net_obligations": legacy_top_n_net_obligations,
+        "legacy_net_denominator": net_obligations,
+        "legacy_net_denominator_share": legacy_net_denominator_share,
+    }
+
+
+def hex_color_with_alpha(hex_color: str, alpha: float) -> str:
+    normalized = str(hex_color or "").strip().lstrip("#")
+    if len(normalized) != 6:
+        return f"rgba(100, 116, 139, {alpha})"
+    red = int(normalized[0:2], 16)
+    green = int(normalized[2:4], 16)
+    blue = int(normalized[4:6], 16)
+    return f"rgba({red}, {green}, {blue}, {alpha})"
+
+
 def market_concentration_summary(transaction_df: pd.DataFrame, total_obligations: float) -> tuple[dict, dict]:
     empty_result = {
         "value": "N/A",
-        "subtitle": "No contract obligations found for this scope.",
-        "supporting_text": "No contract obligations found for this scope.",
+        "subtitle": "Top 5 share of positive obligations",
+        "supporting_text": "No positive obligation transactions in this scope.",
+        "helper_text": (
+            "Uses positive obligation transactions. Negative obligations remain included in the net Contract "
+            "Obligations KPI and are reported separately."
+        ),
         "classification": "",
         "donut_slice_data": [],
         "concentration_segments": [],
         "grouped_contractor_count": 0,
         "other_share_percentage": None,
     }
-    if transaction_df.empty or "Obligation Amount" not in transaction_df.columns:
+    if transaction_df.empty or not {"Contractor Name", "Obligation Amount"}.issubset(transaction_df.columns):
         return empty_result, {
+            "metric": "top_5_positive_obligation_share",
+            "net_market_obligations": round(float(total_obligations or 0.0), 2),
+            "gross_positive_obligations": 0.0,
+            "gross_negative_obligations": 0.0,
+            "top_5_positive_obligations": 0.0,
+            "top_5_positive_share": None,
+            "calculation_basis": "positive_transaction_obligations",
             "total_obligations": round(float(total_obligations or 0.0), 2),
             "grouped_contractor_count": 0,
+            "contractor_count_positive": 0,
             "top_5_contractor_names": [],
             "top_5_contractor_sums": [],
             "top_5_sum": 0.0,
@@ -4049,49 +7280,61 @@ def market_concentration_summary(transaction_df: pd.DataFrame, total_obligations
             "reconciliation_status": False,
         }
 
-    grouped = (
-        transaction_df.groupby("Contractor Name", as_index=False)["Obligation Amount"]
-        .sum()
-        .rename(columns={"Contractor Name": "contractor", "Obligation Amount": "amount"})
+    concentration = calculate_market_concentration(
+        transaction_df,
+        contractor_key_col="Contractor Name",
+        obligation_col="Obligation Amount",
+        top_n=5,
     )
-    grouped = grouped[pd.to_numeric(grouped["amount"], errors="coerce").fillna(0).abs() >= 0.005]
-    grouped = grouped.sort_values("amount", ascending=False).reset_index(drop=True)
-    grouped_total = float(pd.to_numeric(grouped["amount"], errors="coerce").fillna(0).sum())
-    top_5 = grouped.head(5)
-    top_5_sum = float(pd.to_numeric(top_5["amount"], errors="coerce").fillna(0).sum())
-    total = float(total_obligations or 0.0)
-    other_sum = total - top_5_sum
-    reconciles = abs(grouped_total - total) <= 0.01
+    total = float(concentration["net_obligations"])
+    positive_total = float(concentration["positive_obligations"])
+    negative_total = float(concentration["negative_obligations"])
+    top_5_sum = float(concentration["top_n_positive_obligations"])
+    top_5_share = concentration["top_n_share"]
+    top_5 = concentration["contractor_breakdown"]
+    other_sum = positive_total - top_5_sum
+    grouped_total = total
+    reconciles = abs(grouped_total - float(total_obligations or 0.0)) <= 0.01
     if not reconciles:
         print("ERROR: Market concentration total does not reconcile to KPI.")
-    if total <= 0:
+    if top_5_share is None:
         summary = empty_result
         concentration_pct = None
     else:
-        concentration_pct = (top_5_sum / total) * 100
+        concentration_pct = top_5_share * 100
         if concentration_pct >= 70:
             classification = "Highly concentrated market"
         elif concentration_pct >= 40:
             classification = "Moderately concentrated market"
         else:
             classification = "Fragmented market"
+        shown_count = int(len(top_5))
         summary = {
             "value": f"{concentration_pct:.1f}%",
-            "subtitle": "Top 5 contractor share",
-            "supporting_text": f"Top 5 contractors captured {concentration_pct:.1f}% of obligations in this scope.",
+            "subtitle": "Top 5 share of positive obligations",
+            "supporting_text": (
+                f"Top {shown_count} contractors captured {concentration_pct:.1f}% of positive obligations "
+                "in this scope."
+            ),
+            "helper_text": (
+                "Uses positive obligation transactions. Negative obligations remain included in the net Contract "
+                "Obligations KPI and are reported separately."
+            ),
             "classification": classification,
         }
-        if len(grouped) == 1:
-            contractor_name = str(top_5.iloc[0].get("contractor") or "The only contractor")
+        if shown_count == 1 and int(concentration["contractor_count_positive"]) == 1:
+            contractor_name = str(top_5[0].get("contractor") or "The only contractor")
             summary["subtitle"] = "Single-vendor scope"
-            summary["supporting_text"] = f"{contractor_name} accounts for all obligations in this filtered market."
+            summary["supporting_text"] = (
+                f"{contractor_name} accounts for all positive obligations in this filtered market."
+            )
     donut_slice_data = [
         {
-            "contractor": str(row.get("contractor") or "Unknown Contractor"),
+            "contractor": clean_office_value(row.get("contractor")) or "Unknown Contractor",
             "amount": round(float(row.get("amount") or 0.0), 2),
             "display_amount": format_money(row.get("amount")),
         }
-        for row in top_5.to_dict("records")
+        for row in top_5
         if float(row.get("amount") or 0.0) > 0.005
     ]
     if other_sum > 0.005:
@@ -4107,12 +7350,14 @@ def market_concentration_summary(transaction_df: pd.DataFrame, total_obligations
             "contractor": row["contractor"],
             "amount": row["amount"],
             "display_amount": row["display_amount"],
-            "percentage": round((float(row["amount"] or 0.0) / total) * 100, 1) if total > 0 else 0.0,
+            "percentage": round((float(row["amount"] or 0.0) / positive_total) * 100, 1)
+            if positive_total > 0
+            else 0.0,
         }
         for row in donut_slice_data
         if row["contractor"] != "All Other Contractors"
     ]
-    other_pct = round((max(other_sum, 0.0) / total) * 100, 1) if total > 0 else 0.0
+    other_pct = round((max(other_sum, 0.0) / positive_total) * 100, 1) if positive_total > 0 else 0.0
     if other_sum > 0.005:
         concentration_segments.append(
             {
@@ -4125,18 +7370,39 @@ def market_concentration_summary(transaction_df: pd.DataFrame, total_obligations
     total_segment_pct = round(sum(float(row["percentage"] or 0.0) for row in concentration_segments), 1)
     summary["donut_slice_data"] = donut_slice_data
     summary["concentration_segments"] = concentration_segments
-    summary["grouped_contractor_count"] = int(len(grouped))
+    summary["grouped_contractor_count"] = int(concentration["contractor_count_positive"])
     summary["other_share_percentage"] = other_pct if concentration_pct is not None else None
     debug = {
+        "metric": "top_5_positive_obligation_share",
+        "net_market_obligations": round(total, 2),
+        "gross_positive_obligations": round(positive_total, 2),
+        "gross_negative_obligations": round(negative_total, 2),
+        "top_5_positive_obligations": round(top_5_sum, 2),
+        "top_5_positive_share": round(float(top_5_share), 6) if top_5_share is not None else None,
+        "contractor_count_positive": int(concentration["contractor_count_positive"]),
+        "calculation_basis": "positive_transaction_obligations",
+        "legacy_top_5_net_contractor_obligations": round(
+            float(concentration["legacy_top_n_net_obligations"]), 2
+        ),
+        "legacy_net_denominator": round(float(concentration["legacy_net_denominator"]), 2),
+        "legacy_net_denominator_percentage": round(
+            float(concentration["legacy_net_denominator_share"]) * 100, 6
+        )
+        if concentration["legacy_net_denominator_share"] is not None
+        else None,
         "total_obligations": round(total, 2),
-        "grouped_contractor_count": int(len(grouped)),
-        "top_5_contractor_names": [str(row.get("contractor") or "") for row in top_5.to_dict("records")],
+        "positive_obligations": round(positive_total, 2),
+        "negative_obligations": round(negative_total, 2),
+        "grouped_contractor_count": int(concentration["contractor_count_positive"]),
+        "top_5_contractor_names": [str(row.get("contractor") or "") for row in top_5],
         "top_5_contractor_sums": [
-            round(float(row.get("amount") or 0.0), 2) for row in top_5.to_dict("records")
+            round(float(row.get("amount") or 0.0), 2) for row in top_5
         ],
         "top_5_contractor_percentages": [
-            round((float(row.get("amount") or 0.0) / total) * 100, 1) if total > 0 else 0.0
-            for row in top_5.to_dict("records")
+            round((float(row.get("amount") or 0.0) / positive_total) * 100, 1)
+            if positive_total > 0
+            else 0.0
+            for row in top_5
         ],
         "top_5_sum": round(top_5_sum, 2),
         "other_contractor_sum": round(other_sum, 2),
@@ -4165,26 +7431,53 @@ def clean_visible_market_text(text: str) -> str:
     return cleaned.replace("<", "").replace(">", "")
 
 
-def render_market_concentration_legend(legend_lines: list[str]) -> None:
-    if not legend_lines:
+def render_market_concentration_legend(legend_rows: list[dict]) -> None:
+    if not legend_rows:
         return
-    safe_lines = []
-    for line in legend_lines:
-        if visible_text_contains_raw_html(line):
+    row_markup = []
+    for row in legend_rows:
+        contractor = clean_visible_market_text(row.get("contractor") or "Unknown Contractor")
+        amount = clean_visible_market_text(row.get("display_amount") or format_money(row.get("amount")))
+        try:
+            percentage = float(row.get("percentage") or 0.0)
+        except (TypeError, ValueError):
+            percentage = 0.0
+        color = str(row.get("color") or MARKET_CONCENTRATION_SEGMENT_COLORS[-1])
+        visible_values = [contractor, amount, f"{percentage:.1f}%"]
+        if any(visible_text_contains_raw_html(value) for value in visible_values):
             print("ERROR: raw HTML detected in Market Concentration legend text.")
-        safe_lines.append(clean_visible_market_text(line))
-    st.markdown("\n".join(f"- {line}" for line in safe_lines))
+        row_bg = hex_color_with_alpha(color, 0.15)
+        badge_border = hex_color_with_alpha(color, 0.38)
+        row_markup.append(
+            f'<div class="market-concentration-legend-row" style="border-left-color: {html.escape(color)}; '
+            f'background: {row_bg};">'
+            f'<div class="market-concentration-legend-name">{html.escape(contractor)}</div>'
+            f'<div class="market-concentration-legend-metrics">'
+            f'<span class="market-concentration-legend-badge" style="color: {html.escape(color)}; '
+            f'border-color: {badge_border};">{percentage:.1f}%</span>'
+            f'<span class="market-concentration-legend-badge" style="color: {html.escape(color)}; '
+            f'border-color: {badge_border};">{html.escape(amount)}</span>'
+            f"</div></div>"
+        )
+    st.markdown(
+        '<div class="market-concentration-legend">'
+        '<div class="market-concentration-legend-heading">Contractor breakdown - positive obligations</div>'
+        + "".join(row_markup)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_market_concentration_card(market_concentration: dict) -> None:
     visible_text_values = [
         str(market_concentration.get("value") or "N/A"),
-        str(market_concentration.get("subtitle") or "Top 5 contractor share"),
+        str(market_concentration.get("subtitle") or "Top 5 share of positive obligations"),
         str(
             market_concentration.get("supporting_text")
             or market_concentration.get("subtitle")
-            or "No contract obligations found for this scope."
+            or "No positive obligation transactions in this scope."
         ),
+        str(market_concentration.get("helper_text") or ""),
         str(market_concentration.get("classification") or ""),
     ]
     if any(visible_text_contains_raw_html(text) for text in visible_text_values):
@@ -4194,32 +7487,39 @@ def render_market_concentration_card(market_concentration: dict) -> None:
     supporting_text = clean_visible_market_text(
         market_concentration.get("supporting_text")
         or market_concentration.get("subtitle")
-        or "No contract obligations found for this scope."
+        or "No positive obligation transactions in this scope."
     )
-    classification = clean_visible_market_text(visible_text_values[3])
+    helper_text = clean_visible_market_text(market_concentration.get("helper_text") or "")
+    classification = clean_visible_market_text(visible_text_values[4])
     try:
         top_share = float(value.replace("%", "")) if value != "N/A" else 0.0
     except ValueError:
         top_share = 0.0
-    top_share = min(max(top_share, 0.0), 100.0)
+    if top_share > 100.0:
+        print("ERROR: Market concentration percentage exceeded 100%.")
     segments = market_concentration.get("concentration_segments") or []
-    colors = ["#2dd4bf", "#38bdf8", "#a78bfa", "#f59e0b", "#fb7185", "#64748b"]
     segment_markup = ""
-    legend_lines = []
+    legend_rows = []
     if value != "N/A" and segments:
         segment_parts = []
         for index, segment in enumerate(segments[:6]):
-            color = colors[index % len(colors)]
+            color = MARKET_CONCENTRATION_SEGMENT_COLORS[index % len(MARKET_CONCENTRATION_SEGMENT_COLORS)]
             contractor = str(segment.get("contractor") or "Unknown Contractor")
             amount = str(segment.get("display_amount") or format_money(segment.get("amount")))
             percentage = float(segment.get("percentage") or 0.0)
-            title = f"{contractor}: {amount} ({percentage:.1f}% of scope)"
-            short_name = contractor if len(contractor) <= 42 else f"{contractor[:39].rstrip()}..."
+            title = f"{contractor}: {amount} ({percentage:.1f}% of positive obligations)"
             segment_parts.append(
                 f'<div class="market-concentration-segment" style="width: {max(percentage, 0.0):.1f}%; '
                 f'background: {color};" title="{html.escape(title)}"></div>'
             )
-            legend_lines.append(f"{short_name} — {percentage:.1f}% · {amount}")
+            legend_rows.append(
+                {
+                    "contractor": contractor,
+                    "percentage": percentage,
+                    "display_amount": amount,
+                    "color": color,
+                }
+            )
         segment_markup = (
             '<div class="market-concentration-bar" aria-label="Market concentration by contractor">'
             + "".join(segment_parts)
@@ -4233,12 +7533,13 @@ def render_market_concentration_card(market_concentration: dict) -> None:
             <div class="market-intel-subtitle">{html.escape(subtitle)}</div>
             {segment_markup}
             <div class="market-intel-helper">{html.escape(supporting_text)}</div>
+            <div class="market-intel-helper" title="{html.escape(helper_text)}">{html.escape(helper_text)}</div>
             <div class="market-intel-helper">{html.escape(classification)}</div>
         </section>
         """,
         unsafe_allow_html=True,
     )
-    render_market_concentration_legend(legend_lines)
+    render_market_concentration_legend(legend_rows)
 
 
 NAICS_CODE_ALIASES = [
@@ -4482,14 +7783,14 @@ def render_market_lane_mix(
     naics_summary = top_lane_summary(
         naics_df,
         "NAICS",
-        "Top NAICS",
+        "Top NAICS by Obligations",
         bool(selected_naics_code and selected_naics_code != ALL_NAICS_CODES),
         "NAICS mix unavailable from returned transaction rows for this scope.",
     )
     psc_summary = top_lane_summary(
         psc_df,
         "PSC",
-        "Top PSC",
+        "Top PSC by Obligations",
         bool(selected_psc_code and selected_psc_code != ALL_PRODUCT_SERVICE_CODES),
         "PSC mix unavailable from returned transaction rows for this scope.",
     )
@@ -4531,17 +7832,9 @@ def render_market_lane_mix(
         display_df["Obligated"] = display_df["Obligated"].apply(format_money)
         display_df["% of Scope"] = display_df["% of Scope"].apply(lambda value: f"{float(value or 0.0):.1f}%")
         display_df = display_df.drop(columns=["Full Description"])
-        st.dataframe(
+        render_dark_html_table(
             display_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Description": st.column_config.TextColumn(width="large"),
-                "Obligated": st.column_config.TextColumn(width="small"),
-                "% of Scope": st.column_config.TextColumn(width="small"),
-                "Awards": st.column_config.NumberColumn(width="small"),
-                "Contractors": st.column_config.NumberColumn(width="small"),
-            },
+            columns=list(display_df.columns),
         )
 
     with st.expander("View Market Lane Mix", expanded=False):
@@ -4714,6 +8007,35 @@ def award_drilldown_csv_bytes(award_df: pd.DataFrame) -> bytes:
     return export_df[export_columns].to_csv(index=False).encode("utf-8")
 
 
+def render_dark_html_table(df: pd.DataFrame, columns: list[str] | None = None) -> None:
+    if df.empty:
+        return
+    display_columns = columns or list(df.columns)
+    header_markup = "".join(f"<th>{html.escape(str(column))}</th>" for column in display_columns)
+    rows_markup = []
+    for row in df[display_columns].to_dict("records"):
+        cells = []
+        for column in display_columns:
+            value = row.get(column)
+            if isinstance(value, date):
+                display_value = value.isoformat()
+            else:
+                display_value = clean_office_value(value)
+            cells.append(f"<td>{html.escape(display_value)}</td>")
+        rows_markup.append(f"<tr>{''.join(cells)}</tr>")
+    st.markdown(
+        f"""
+        <div class="award-drilldown-table-wrap">
+            <table class="award-drilldown-table">
+                <thead><tr>{header_markup}</tr></thead>
+                <tbody>{''.join(rows_markup)}</tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_award_drilldown_html_table(visible_df: pd.DataFrame) -> None:
     headers = [
         "Contractor",
@@ -4763,7 +8085,7 @@ def render_award_drilldown_html_table(visible_df: pd.DataFrame) -> None:
     body_markup = "".join(rows_markup)
     st.markdown(
         f"""
-        <div class="award-drilldown-table-wrap">
+        <div class="award-drilldown-table-wrap award-drilldown-table-wrap--scroll">
             <table class="award-drilldown-table">
                 <thead><tr>{header_markup}</tr></thead>
                 <tbody>{body_markup}</tbody>
@@ -4787,7 +8109,7 @@ def render_top_awards_drilldown(award_df: pd.DataFrame, scope_key: str) -> dict:
         "Remaining Ceiling",
         "Most Recent Action",
     ]
-    control_cols = st.columns([1, 1, 1.4])
+    control_cols = st.columns([1, 1.5, 1.2])
     with control_cols[0]:
         row_count_label = st.selectbox(
             "Rows",
@@ -4824,6 +8146,7 @@ def render_top_awards_drilldown(award_df: pd.DataFrame, scope_key: str) -> dict:
         f"\u00b7 {format_money(total_obligations)} obligated in this scope"
     )
     with control_cols[2]:
+        st.markdown('<div class="control-button-spacer"></div>', unsafe_allow_html=True)
         st.download_button(
             "Download All Awards CSV",
             data=award_drilldown_csv_bytes(sorted_df),
@@ -4852,7 +8175,7 @@ def active_refine_filter_application_debug(
     psc_code, _psc_label = decode_option(market_filters["psc_code"])
     set_aside_code, _set_aside_label = decode_option(market_filters["set_aside_type"])
     funding_office_code, funding_office_name = decode_option(market_filters["funding_office"])
-    pop_state, _state_label = decode_option(market_filters["pop_state"])
+    pop_code, _pop_label = decode_option(market_filters["pop_state"])
     contracting_office_code, contracting_office_name = decode_contracting_office(contracting_office)
     checks = {
         "naics_code": (
@@ -4882,12 +8205,9 @@ def active_refine_filter_application_debug(
             or client_side_filter.get("funding_office_code") == funding_office_code
             or client_side_filter.get("funding_office_name") == funding_office_name
         ),
-        "place_of_performance_state": (
-            pop_state == ALL_POP_STATES
-            or any(
-                isinstance(location, dict) and location.get("state") == pop_state
-                for location in filters.get("place_of_performance_locations", [])
-            )
+        "place_of_performance": place_of_performance_filter_matches(
+            pop_code,
+            filters.get("place_of_performance_locations", []),
         ),
     }
     return {
@@ -5232,6 +8552,7 @@ def mark_analysis_started(
     selected_contracting_office: str,
     selected_market_filters: dict,
 ) -> None:
+    """Copy pending sidebar selections (active_*) into analyzed_* dashboard state."""
     st.session_state.dashboard_started = True
     st.session_state.analysis_loading_requested = True
     st.session_state.analyzed_agency = active_agency
@@ -5243,6 +8564,8 @@ def mark_analysis_started(
         "pending_office_option_stats",
         {},
     )
+    st.session_state.analysis_run_started_at = utc_analysis_timestamp()
+    st.session_state.pop("analysis_run_completed_at", None)
 
 
 def clear_all_cached_dashboard_data() -> None:
@@ -5286,6 +8609,2279 @@ def time_grain_scope_key(
     ).hexdigest()[:12]
 
 
+def render_workflow_or_divider() -> None:
+    st.markdown('<div class="workflow-or-divider">OR</div>', unsafe_allow_html=True)
+
+
+def render_solicitation_workflow_cta() -> None:
+    st.markdown(
+        """
+        <div class="workflow-cta-title">Have a solicitation in hand?</div>
+        <div class="workflow-cta-subtitle">Upload the solicitation package and GovCon Agency Trends will extract the market scope, identify amendments, and prepare confirmed filters for your review.</div>
+        <div class="workflow-cta-helper">Upload the base solicitation, amendments, PWS/SOW, Section L/M, pricing files, Q&amp;A, and related attachments. Multiple files are supported.</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _valid_completed_resolved_payload(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("version") != RESOLVED_SIGNALS_VERSION:
+        return False
+    signals = payload.get("signals")
+    if not isinstance(signals, list) or not signals:
+        return False
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    requested = int(summary.get("requestedSignalCount") or 0)
+    if requested:
+        countable = [item for item in signals if isinstance(item, dict) and item.get("id") != "process_sources_v1"]
+        return len(countable) >= requested
+    return True
+
+
+def _latest_completed_resolved_artifact() -> tuple[str, Path, dict] | None:
+    runs_dir = get_data_dir() / "runs"
+    if not runs_dir.exists():
+        return None
+    candidates: list[tuple[float, Path]] = []
+    for path in runs_dir.glob("run_*/signals/resolved_signals.json"):
+        try:
+            candidates.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    for _modified, path in sorted(candidates, reverse=True):
+        try:
+            payload = read_json(path)
+        except Exception:
+            continue
+        if _valid_completed_resolved_payload(payload):
+            return path.parents[1].name, path, payload
+    return None
+
+
+def _apply_loaded_resolved_signals(payload: dict, *, source_label: str) -> None:
+    st.session_state.solicitation_resolved_signals = payload
+    st.session_state.solicitation_scope_preview = build_solicitation_scope_preview(payload)
+    st.session_state.solicitation_user_filter_overrides = {}
+    st.session_state.solicitation_removed_filter_fields = []
+    st.session_state.solicitation_loaded_run_id = payload.get("runId")
+    st.session_state.solicitation_signals_source = source_label
+    st.session_state.solicitation_signals_loaded_at = utc_analysis_timestamp()
+    st.session_state.pop("solicitation_mapping_result", None)
+    st.session_state.solicitation_extraction_complete = True
+    st.session_state.solicitation_extraction_status = "completed"
+    st.session_state.solicitation_mapping_status = "not_started"
+    st.session_state.solicitation_review_status = "ready"
+    st.session_state.solicitation_scope_applied = False
+    st.session_state.solicitation_scope_review_open = False
+    st.session_state.solicitation_comparable_market = False
+    st.session_state.pop("solicitation_saved_contracting_office", None)
+
+
+def render_upload_solicitation_package_panel() -> None:
+    uploaded_files = st.file_uploader(
+        "Upload Solicitation Package",
+        type=["pdf", "docx", "xlsx", "xls", "csv", "txt"],
+        accept_multiple_files=True,
+        key="solicitation_package_uploader",
+        help="Upload the base solicitation, amendments, PWS/SOW, Section L/M, pricing files, Q&A, and related attachments.",
+    )
+
+    staged = validate_and_stage_uploads(uploaded_files or [])
+    load_project_env()
+    extraction_mode = get_extraction_mode()
+    from extraction.config import get_extraction_profile
+
+    extraction_profile = get_extraction_profile()
+    st.session_state.solicitation_engine_diagnostics = {
+        "mode": extraction_mode,
+        "profile": extraction_profile,
+    }
+
+    if not uploaded_files and not st.session_state.get("solicitation_resolved_signals"):
+        recovered_artifact = _latest_completed_resolved_artifact()
+        if recovered_artifact:
+            run_id, resolved_path, _payload = recovered_artifact
+            payload = read_json(resolved_path)
+            _apply_loaded_resolved_signals(payload, source_label="completed_run_resolved_signals_json")
+            st.session_state.solicitation_extraction_result = {
+                "summary": {
+                    "runId": run_id,
+                    "recoveredExistingArtifact": True,
+                    "resolvedSignalsJson": str(resolved_path),
+                },
+                "success": True,
+                "errorMessage": None,
+            }
+            st.session_state.solicitation_extraction_complete = True
+            st.session_state.solicitation_extraction_status = "completed"
+
+    if uploaded_files:
+        st.caption(f"{len(uploaded_files)} files selected")
+
+    current_fingerprint = st.session_state.get("solicitation_upload_fingerprint")
+    files_changed = bool(staged.fingerprint and staged.fingerprint != current_fingerprint)
+
+    extract_clicked = st.button(
+        "Extract Solicitation",
+        type="primary",
+        use_container_width=True,
+        key="extract_solicitation_btn",
+    )
+    should_extract = bool(extract_clicked and staged.paths)
+
+    if should_extract and files_changed:
+        if any(item.level == "error" for item in staged.findings):
+            for finding in staged.findings:
+                if finding.level == "error":
+                    details = finding.details or {}
+                    filename = details.get("filename") or details.get("path") or ""
+                    st.error(f"{finding.message} ({filename})" if filename else finding.message)
+        else:
+            st.session_state.solicitation_extraction_status = "running"
+            st.session_state.solicitation_mapping_status = "not_started"
+            st.session_state.solicitation_review_status = "not_ready"
+            st.session_state.solicitation_extraction_transition_rerun_done = False
+            progress = st.progress(0.0, text="Saving solicitation files")
+            status = st.empty()
+            progress_detail: dict = {"label": "Saving solicitation files", "pct": 0.0}
+
+            def _progress(label: str, pct: float) -> None:
+                progress_detail["label"] = label
+                progress_detail["pct"] = pct
+                progress.progress(min(max(pct, 0.0), 1.0), text=label)
+                render_extraction_loading_card(status, progress_detail)
+
+            os.environ.pop("GOVCON_FORCE_PACKAGE_REFRESH", None)
+            render_extraction_loading_card(status, progress_detail)
+            result = run_extraction_from_paths(
+                staged.paths,
+                progress=_progress,
+                progress_detail=progress_detail,
+            )
+
+            st.session_state.solicitation_extraction_result = {
+                "summary": result.summary,
+                "success": result.success,
+                "errorMessage": result.error_message,
+            }
+            st.session_state.solicitation_extraction_diagnostics = [
+                item.to_dict() for item in result.findings if item.level in {"warn", "error", "warning"}
+            ]
+            st.session_state.solicitation_upload_fingerprint = staged.fingerprint
+            st.session_state.solicitation_upload_staged_paths = [str(path) for path in staged.paths]
+
+            if result.resolved_signals:
+                _apply_loaded_resolved_signals(result.resolved_signals, source_label="pipeline_full_extraction")
+                st.session_state.solicitation_extraction_complete = result.success
+                st.session_state.solicitation_extraction_status = "completed" if result.success else "failed"
+            else:
+                st.session_state.solicitation_extraction_complete = False
+                st.session_state.solicitation_extraction_status = "failed"
+
+            cleanup_staged_paths(staged.paths)
+            progress.progress(1.0, text="Market scope extracted successfully")
+            status.empty()
+            progress.empty()
+            if not st.session_state.get("solicitation_extraction_transition_rerun_done"):
+                st.session_state.solicitation_extraction_transition_rerun_done = True
+                st.rerun()
+
+    extraction_result = st.session_state.get("solicitation_extraction_result")
+    if extraction_result and not extraction_result.get("success"):
+        summary = extraction_result.get("summary") or {}
+        st.warning(extraction_result.get("errorMessage") or "Extraction completed with issues. Review warnings below.")
+        excluded_files = summary.get("excludedFiles") or []
+        for item in excluded_files[:6]:
+            message = str(item.get("message") or "File excluded")
+            details = item.get("details") or {}
+            filename = details.get("filename") or details.get("path") or ""
+            st.warning(f"{message} - {filename}" if filename else message)
+        if should_show_blocking_ocr_error(summary, st.session_state.get("solicitation_extraction_diagnostics") or []):
+            st.error("A controlling document could not be read. Required market-scope values may be incomplete.")
+
+
+def _render_resolved_signals_upload_content(*, show_test_mode_note: bool = True) -> None:
+    if show_test_mode_note:
+        st.caption("For testing or re-loading a previously generated resolved_signals.json artifact.")
+    uploaded = st.file_uploader(
+        "resolved_signals.json",
+        type=["json"],
+        key="solicitation_signals_uploader",
+    )
+    dev_path = st.text_input(
+        "Local debug path (optional)",
+        value=st.session_state.get("solicitation_dev_path", ""),
+        placeholder="C:\\path\\to\\resolved_signals.json",
+        key="solicitation_dev_path_input",
+    )
+    load_clicked = st.button("Load Signals", key="load_solicitation_signals", use_container_width=True)
+    clear_clicked = st.button("Clear Loaded Signals", key="clear_solicitation_signals", use_container_width=True)
+
+    if clear_clicked:
+        for key in (
+            "solicitation_resolved_signals",
+            "solicitation_scope_preview",
+            "solicitation_mapping_result",
+            "solicitation_user_filter_overrides",
+            "solicitation_loaded_run_id",
+        ):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+    if load_clicked:
+        try:
+            source = uploaded
+            if source is None and dev_path.strip():
+                source = dev_path.strip()
+                st.session_state.solicitation_dev_path = dev_path.strip()
+            payload = load_resolved_signals_json(source)
+            _apply_loaded_resolved_signals(
+                payload,
+                source_label="uploaded_resolved_signals_json" if uploaded is not None else "local_resolved_signals_json_path",
+            )
+            st.success(f"Loaded {len(payload.get('signals') or [])} signals.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+
+def render_load_solicitation_signals_panel(*, show_test_mode_note: bool = True) -> None:
+    with st.expander("Advanced: Upload Existing resolved_signals.json", expanded=False):
+        _render_resolved_signals_upload_content(show_test_mode_note=show_test_mode_note)
+
+
+def _solicitation_user_override(user_overrides: dict[str, str], field_name: str) -> str | None:
+    legacy_names = {
+        "Agency": "Mapped Agency",
+        "Subagency / Bureau": "Mapped Subagency / Bureau",
+        "Contracting Office": "Mapped Contracting Office",
+    }
+    selected = user_overrides.get(field_name)
+    if selected:
+        return selected
+    legacy = legacy_names.get(field_name)
+    return user_overrides.get(legacy) if legacy else None
+
+
+def _solicitation_truncate(value: object | None, max_length: int = 180) -> str:
+    text = str(value or "").strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3] + "..."
+
+
+SOLICITATION_MANUAL_FILTER_SPECS = [
+    ("Agency", "agency"),
+    ("Subagency / Bureau", "bureau"),
+    ("Contracting Office", "contracting_office"),
+    ("Funding Office", "funding_office"),
+    ("NAICS", "naics_code"),
+    ("PSC", "psc_code"),
+    ("Contract Type", "contract_type"),
+    ("Set-Aside", "set_aside_type"),
+    ("Place of Performance", "pop_state"),
+]
+
+SOLICITATION_OPTIONAL_FILTER_SPECS = [
+    ("Contracting Office", "contracting_office"),
+    ("Funding Office", "funding_office"),
+    ("NAICS", "naics_code"),
+    ("PSC", "psc_code"),
+    ("Contract Type", "contract_type"),
+    ("Set-Aside", "set_aside_type"),
+    ("Place of Performance", "pop_state"),
+]
+
+SOLICITATION_FILTER_SIGNAL_IDS = {
+    "rfp_solicitation_number_v1",
+    "rfp_solicitation_id_v1",
+    "rfp_issuing_agency_v1",
+    "rfp_issuing_office_v1",
+    "rfp_office_aac_v1",
+    "rfp_funding_office_v1",
+    "rfp_funding_office_name_v1",
+    "rfp_primary_naics_v1",
+    "rfp_primary_psc_v1",
+    "rfp_contract_type_v1",
+    "rfp_set_aside_v1",
+    "rfp_competition_type_v1",
+    "rfp_place_of_performance_v1",
+}
+
+SOLICITATION_MAPPING_BASIS_LABELS = {
+    "deterministic_hierarchy": "hierarchy match",
+    "exact_normalized": "exact normalized name",
+    "known_alias": "known alias",
+    "fuzzy_org_name": "fuzzy organization name",
+    "exact_subagency": "exact subagency",
+    "fuzzy_subagency": "fuzzy subagency",
+    "all_bureaus": "all bureaus default",
+    "office_aac_code": "exact office code",
+    "issuing_office_name": "fuzzy office name",
+    "funding_office_code": "exact funding office code",
+    "funding_office_name_exact": "exact funding office name",
+    "funding_office_name_fuzzy": "fuzzy funding office name",
+    "exact_code": "exact code",
+    "contract_type_alias": "contract type alias",
+    "set_aside_alias": "set-aside alias",
+    "parse_us_state": "parsed US state",
+    "default_all_bureaus": "default all bureaus",
+}
+
+
+def _solicitation_mapping_basis(field_name: str, mapping_attempts: dict) -> str:
+    attempts = mapping_attempts.get(field_name) or []
+    if not attempts:
+        return ""
+    strategy = str(attempts[0].get("strategy") or "").strip()
+    return SOLICITATION_MAPPING_BASIS_LABELS.get(strategy, strategy.replace("_", " "))
+
+
+def _solicitation_removed_fields() -> set[str]:
+    raw = st.session_state.get("solicitation_removed_filter_fields") or []
+    return {str(item) for item in raw}
+
+
+def _solicitation_set_removed_fields(fields: set[str]) -> None:
+    st.session_state.solicitation_removed_filter_fields = sorted(fields)
+
+
+def _solicitation_requires_user_confirmation(row: dict) -> bool:
+    return row.get("filter_key") in SOLICITATION_USER_CONFIRMATION_FILTER_KEYS
+
+
+def _solicitation_pop_parsed_display(extracted_value: object | None) -> str:
+    state_code, state_name = parse_pop_state_from_text(extracted_value)
+    if not state_code:
+        return ""
+    label = state_name or STATE_OPTIONS.get(state_code, state_code)
+    return f"{state_code} — {label}"
+
+
+def is_solicitation_confirmed_filter(row: dict, available_filter_options: dict) -> bool:
+    filter_key = row.get("filter_key")
+    if not filter_key or not row.get("filter_option"):
+        return False
+    if filter_key in SOLICITATION_USER_CONFIRMATION_FILTER_KEYS:
+        return False
+    if row.get("mapping_status") != "Exact match" or not row.get("preselect"):
+        return False
+    if not _solicitation_option_is_valid(filter_key, row["filter_option"], available_filter_options):
+        return False
+    validation_status = str(row.get("validation_status") or "").strip().lower()
+    evidence_validated = bool(str(row.get("evidence_snippet") or "").strip())
+    if validation_status not in SOLICITATION_CONFIRMED_VALIDATION_STATUSES:
+        return False
+    if not evidence_validated:
+        return False
+    confidence_high = str(row.get("confidence") or "").strip().lower() == "high"
+    if row.get("deterministic_mapping"):
+        return confidence_high
+    return confidence_high
+
+
+def _solicitation_workflow_status(
+    row: dict,
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+) -> str:
+    if row.get("mapping_unavailable") or row.get("mapping_status") == SOLICITATION_MAPPING_UNAVAILABLE_STATUS:
+        return SOLICITATION_MAPPING_UNAVAILABLE_STATUS
+    if row.get("mapping_status") == "Context only" or not row.get("filter_key"):
+        return "Context only"
+    field_name = row["field"]
+    selected = _solicitation_user_override(user_overrides, field_name)
+    if _solicitation_requires_user_confirmation(row):
+        if (
+            selected
+            and selected != KEEP_CURRENT_SOLICITATION_FILTER
+            and _solicitation_option_is_valid(row.get("filter_key"), selected, available_filter_options)
+        ):
+            return "Manually selected"
+        if row.get("filter_option"):
+            return "Suggested / needs confirmation"
+        return "Unmapped"
+    confirmed = is_solicitation_confirmed_filter(row, available_filter_options)
+    if (
+        selected
+        and selected != KEEP_CURRENT_SOLICITATION_FILTER
+        and _solicitation_option_is_valid(row.get("filter_key"), selected, available_filter_options)
+    ):
+        if confirmed and selected == row.get("filter_option"):
+            return "Suggested from solicitation"
+        return "Manually selected"
+    if confirmed:
+        return "Suggested from solicitation"
+    if not row.get("filter_option"):
+        return "Unmapped"
+    if row.get("mapping_status") == "Suggested match" or str(row.get("confidence") or "").lower() in (
+        "medium",
+        "low",
+    ):
+        return "Suggested / needs confirmation"
+    return "Unmapped"
+
+
+def _solicitation_status_badge_html(status: str) -> str:
+    css_class = {
+        "Suggested": "solicitation-status-suggested",
+        "Confirmed by analyst": "solicitation-status-auto",
+        "Edited by analyst": "solicitation-status-manual",
+        "Needs review": "solicitation-status-confirm",
+        "Not found in uploaded package": "solicitation-status-unmapped",
+        "Not available in dashboard scope": "solicitation-status-unmapped",
+        "Excluded by analyst": "solicitation-status-removed",
+        "Suggested from solicitation": "solicitation-status-suggested",
+        "Suggested / needs confirmation": "solicitation-status-confirm",
+        "Manually selected": "solicitation-status-manual",
+        "Removed by user": "solicitation-status-removed",
+        "Unmapped": "solicitation-status-unmapped",
+        "Context only": "solicitation-status-context",
+        "Exact match": "solicitation-status-exact",
+        "Suggested match": "solicitation-status-suggested",
+        "Requires confirmation": "solicitation-status-confirm",
+        SOLICITATION_MAPPING_UNAVAILABLE_STATUS: "solicitation-status-unmapped",
+    }.get(status, "solicitation-status-context")
+    safe_status = html.escape(status)
+    return f'<span class="solicitation-status-badge {css_class}">{safe_status}</span>'
+
+
+def _solicitation_mapped_display_value(
+    row: dict,
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+) -> str:
+    field_name = row["field"]
+    filter_key = row.get("filter_key")
+    selected = _solicitation_user_override(user_overrides, field_name)
+    if selected and selected != KEEP_CURRENT_SOLICITATION_FILTER:
+        if _solicitation_option_is_valid(filter_key, selected, available_filter_options):
+            return _format_solicitation_filter_option(row, selected)
+    if row.get("filter_option"):
+        return _format_solicitation_filter_option(row, row["filter_option"])
+    return str(row.get("unmapped_extracted_display") or row.get("mapped_filter_display") or "—")
+
+
+SOLICITATION_OPPORTUNITY_CONTEXT_SIGNAL_SPECS = [
+    ("Solicitation Number", ["rfp_solicitation_number_v1", "rfp_solicitation_id_v1"]),
+    ("Description", ["rfp_description_v1"]),
+    ("Incumbent", ["rfp_incumbent_data_v1"]),
+    ("Period of Performance", ["rfp_period_of_performance_v1"]),
+    ("POP Start", ["rfp_pop_start_v1"]),
+    ("POP End", ["rfp_pop_end_v1"]),
+    ("POP Years", ["rfp_pop_years_v1"]),
+    ("Primary POC", ["rfp_primary_poc_v1"]),
+    ("Contracting Officer (KO)", ["rfp_ko_name_v1"]),
+    ("Contract Specialist", ["rfp_contract_specialist_name_v1"]),
+    ("Evaluation method", ["rfp_eval_method_v1"]),
+    ("Evaluation weights", ["rfp_eval_weights_v1"]),
+    ("Past performance requirements", ["rfp_past_perf_reqs_v1"]),
+    ("Pricing constraints", ["rfp_pricing_constraints_v1"]),
+    ("Fee constraints", ["rfp_fee_constraints_v1"]),
+    ("Key personnel", ["rfp_key_personnel_v1"]),
+    ("Clearances", ["rfp_clearances_v1"]),
+    ("Competition type", ["rfp_competition_type_v1"]),
+    ("Requirement name", ["rfp_requirement_name_v1"]),
+    ("Title", ["rfp_title_v1"]),
+    ("Strategic intent", ["rfp_strategic_intent_v1"]),
+    ("Submission destination", ["rfp_submission_destination_v1"]),
+    ("Submission format", ["rfp_submission_format_v1"]),
+    ("Submission instructions", ["rfp_submission_instructions_v1"]),
+    ("Submission method", ["rfp_submission_method_v1"]),
+    ("Questions due", ["rfp_questions_due_v1"]),
+    ("Prior contract PIID", ["rfp_prior_contract_piid_v1"]),
+    ("Technical factors", ["rfp_tech_factors_v1"]),
+]
+
+
+def build_solicitation_opportunity_context_rows(
+    resolved_signals: dict,
+    scope_preview: dict,
+) -> list[dict]:
+    rows: list[dict] = []
+    seen_fields: set[str] = set()
+    for field_name, signal_ids in SOLICITATION_OPPORTUNITY_CONTEXT_SIGNAL_SPECS:
+        value, confidence, signal_id, signal = first_signal_value(resolved_signals, signal_ids)
+        if value is None:
+            field_data = scope_preview.get(field_name, {})
+            if field_data.get("value") is None:
+                continue
+            value = field_data.get("value")
+            confidence = field_data.get("confidence")
+            evidence_snippet = field_data.get("evidence_snippet", "")
+            evidence_source = field_data.get("evidence_source", "")
+            evidence_locator = field_data.get("evidence_locator", "")
+        else:
+            evidence_details = signal_evidence_details(signal)
+            evidence_snippet = signal_evidence_snippet(signal)
+            evidence_source = evidence_details.get("source", "")
+            evidence_locator = evidence_details.get("locator", "")
+        if field_name in seen_fields:
+            continue
+        seen_fields.add(field_name)
+        rows.append(
+            {
+                "field": field_name,
+                "extracted_value": value,
+                "confidence": confidence,
+                "signal_id": signal_id,
+                "evidence_snippet": evidence_snippet,
+                "evidence_source": evidence_source,
+                "evidence_locator": evidence_locator,
+            }
+        )
+    return rows
+
+
+def _solicitation_rows_by_field(rows: list[dict]) -> dict[str, dict]:
+    by_field: dict[str, dict] = {}
+    for row in rows:
+        field_name = row.get("field")
+        if not field_name or field_name in by_field:
+            continue
+        if row.get("filter_key") or row.get("mapping_status") == "Context only":
+            by_field[field_name] = row
+    return by_field
+
+
+def _solicitation_is_suggested_filter(row: dict, available_filter_options: dict) -> bool:
+    if not row.get("filter_key"):
+        return False
+    if is_solicitation_confirmed_filter(row, available_filter_options):
+        return False
+    if row.get("filter_option"):
+        return True
+    if row.get("mapping_status") == "Suggested match":
+        return True
+    return str(row.get("confidence") or "").strip().lower() in ("medium", "low")
+
+
+def _solicitation_manual_review_rows(
+    rows: list[dict],
+    available_filter_options: dict,
+    funding_office_extracted: bool,
+) -> list[dict]:
+    rows_by_field = _solicitation_rows_by_field(rows)
+    manual_rows: list[dict] = []
+    for field_name, filter_key in SOLICITATION_MANUAL_FILTER_SPECS:
+        row = rows_by_field.get(field_name)
+        if row and is_solicitation_confirmed_filter(row, available_filter_options):
+            continue
+        if row and _solicitation_is_suggested_filter(row, available_filter_options):
+            continue
+        if field_name == "Funding Office" and not funding_office_extracted and not row:
+            manual_rows.append(
+                {
+                    "field": field_name,
+                    "filter_key": filter_key,
+                    "extracted_value": None,
+                    "filter_option": None,
+                    "mapping_status": "Unmapped",
+                    "confidence": None,
+                    "evidence_snippet": "",
+                }
+            )
+            continue
+        if row:
+            manual_rows.append(row)
+        else:
+            manual_rows.append(
+                {
+                    "field": field_name,
+                    "filter_key": filter_key,
+                    "extracted_value": None,
+                    "filter_option": None,
+                    "mapping_status": "Unmapped",
+                    "confidence": None,
+                    "evidence_snippet": "",
+                }
+            )
+    return manual_rows
+
+
+def _solicitation_summary_title(resolved_signals: dict) -> str:
+    for signal_ids in (["rfp_title_v1"], ["rfp_requirement_name_v1"]):
+        value, _, _, _ = first_signal_value(resolved_signals, signal_ids)
+        if value is not None:
+            return _solicitation_truncate(value, 120)
+    return ""
+
+
+def _solicitation_loaded_context_line(resolved_signals: dict, scope_preview: dict) -> str:
+    solicitation_data = scope_preview.get("Solicitation Number", {})
+    solicitation_number = str(solicitation_data.get("value") or "").strip()
+    if not solicitation_number:
+        value, _, _, _ = first_signal_value(
+            resolved_signals,
+            ["rfp_solicitation_number_v1", "rfp_solicitation_id_v1"],
+        )
+        solicitation_number = str(value or "").strip()
+    title = _solicitation_summary_title(resolved_signals)
+    if solicitation_number and title:
+        return f"Solicitation loaded: {solicitation_number} — {title}"
+    if solicitation_number:
+        return f"Solicitation loaded: {solicitation_number}"
+    if title:
+        return f"Solicitation loaded: {title}"
+    return "Solicitation loaded"
+
+
+def _solicitation_summary_specs(
+    scope_preview: dict,
+    rows_by_field: dict[str, dict],
+) -> tuple[list[tuple[str, str, bool]], object | None]:
+    org_row = rows_by_field.get("Extracted Organization")
+    extracted_org = org_row.get("extracted_value") if org_row else scope_preview.get("Issuing Agency", {}).get("value")
+    specs: list[tuple[str, str, bool]] = [
+        ("Solicitation number", "Solicitation Number", False),
+        ("Extracted organization", "", False),
+        ("Mapped Agency", "Agency", True),
+        ("Mapped Subagency / Bureau", "Subagency / Bureau", True),
+        ("Contracting Office", "Contracting Office", True),
+        ("Funding Office", "Funding Office", True),
+        ("NAICS", "NAICS", True),
+        ("PSC", "PSC", True),
+        ("Contract Type", "Contract Type", True),
+        ("Set-Aside", "Set-Aside", True),
+        ("Place of Performance", "Place of Performance", True),
+        ("Incumbent", "Incumbent Data", False),
+    ]
+    return specs, extracted_org
+
+
+def _solicitation_confirmed_display_rows(
+    rows: list[dict],
+    available_filter_options: dict,
+    user_overrides: dict[str, str],
+    removed_fields: set[str],
+) -> list[tuple[dict, str]]:
+    rows_by_field = _solicitation_rows_by_field(rows)
+    display_rows: list[tuple[dict, str]] = []
+    for row in rows:
+        field_name = row.get("field") or ""
+        if is_solicitation_filter_removed(field_name, removed_fields):
+            continue
+        if row.get("filter_key") and is_solicitation_confirmed_filter(row, available_filter_options):
+            display_rows.append((row, "Suggested from solicitation"))
+    pop_row = rows_by_field.get("Place of Performance")
+    if pop_row:
+        selected = _solicitation_user_override(user_overrides, "Place of Performance")
+        if (
+            selected
+            and selected != KEEP_CURRENT_SOLICITATION_FILTER
+            and _solicitation_option_is_valid("pop_state", selected, available_filter_options)
+        ):
+            display_rows.append(
+                (
+                    {
+                        **pop_row,
+                        "filter_option": selected,
+                        "mapped_filter_display": _format_solicitation_filter_option(pop_row, selected),
+                    },
+                    "Manually selected",
+                )
+            )
+    return display_rows
+
+
+def _solicitation_optional_filter_rows(
+    rows: list[dict],
+    available_filter_options: dict,
+    *,
+    removed_fields: set[str],
+    funding_office_extracted: bool,
+) -> list[dict]:
+    return build_solicitation_additional_filter_rows(
+        rows,
+        removed_fields=removed_fields,
+        funding_office_extracted=funding_office_extracted,
+        is_confirmed_filter=is_solicitation_confirmed_filter,
+        requires_user_confirmation=_solicitation_requires_user_confirmation,
+        available_filter_options=available_filter_options,
+    )
+
+
+def _solicitation_optional_filter_hint(
+    row: dict,
+    available_filter_options: dict,
+    *,
+    funding_office_extracted: bool,
+) -> str:
+    field_name = row["field"]
+    if row.get("mapping_unavailable"):
+        extracted = _solicitation_truncate(row.get("extracted_value"), 160)
+        if extracted:
+            return f"Extracted: {extracted}. Dashboard option matching is temporarily unavailable."
+        return "Dashboard option matching is temporarily unavailable."
+    if is_solicitation_confirmed_filter(row, available_filter_options):
+        return ""
+    if field_name == "Funding Office":
+        if not funding_office_extracted and row.get("extracted_value") is None:
+            return "No funding office was extracted. Select one manually only if you know it applies."
+        if row.get("filter_option") and _solicitation_is_suggested_filter(row, available_filter_options):
+            return (
+                f"Suggested: {_format_solicitation_filter_option(row, row['filter_option'])} "
+                "— select to apply."
+            )
+    if field_name == "PSC":
+        extracted_code = extract_category_code(row.get("extracted_value")) or str(
+            row.get("unmapped_extracted_display") or ""
+        ).strip()
+        if extracted_code and not row.get("filter_option"):
+            return (
+                f"Extracted PSC: {extracted_code}. Not applied because it was not found "
+                "in the available scoped PSC options."
+            )
+    if field_name == "Place of Performance":
+        parsed_pop = _solicitation_pop_parsed_display(row.get("extracted_value"))
+        if parsed_pop:
+            return (
+                f"Place of Performance parsed as {parsed_pop}. Analyst confirmation is required because "
+                "solicitations may include multiple or remote performance locations."
+            )
+    if row.get("filter_option") and _solicitation_is_suggested_filter(row, available_filter_options):
+        return (
+            f"Suggested: {_format_solicitation_filter_option(row, row['filter_option'])} "
+            "— select to apply."
+        )
+    if row.get("extracted_value") is not None and not row.get("filter_option"):
+        return f"Extracted: {_solicitation_truncate(row.get('extracted_value'), 160)}. Analyst confirmation is required."
+    return ""
+
+
+def _solicitation_validation_display(row: dict) -> str:
+    status = str(row.get("validation_status") or "").strip().lower()
+    if status in SOLICITATION_CONFIRMED_VALIDATION_STATUSES:
+        return "confirmed"
+    if status:
+        return "needs review"
+    return "not found"
+
+
+def _solicitation_row_has_evidence(row: dict) -> bool:
+    return bool(str(row.get("evidence_snippet") or "").strip())
+
+
+def _solicitation_review_session_key(prefix: str, field_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", field_name.lower()).strip("_")
+    return f"solicitation_scope_{prefix}_{slug}"
+
+
+def _solicitation_selected_review_value(row: dict, available_filter_options: dict) -> str | None:
+    field_name = row["field"]
+    filter_key = row.get("filter_key")
+    if not filter_key:
+        return None
+    suggested = row.get("filter_option")
+    options = _solicitation_filter_options_for_row(row, available_filter_options)
+    placeholder = row.get("unmapped_extracted_display") if row.get("is_hybrid") else None
+    select_key = _solicitation_review_session_key("value", field_name)
+    stored = st.session_state.get(select_key)
+    if stored == placeholder or stored in {KEEP_CURRENT_SOLICITATION_FILTER, "Select...", "Select manually"}:
+        return None
+    if stored in options:
+        return stored
+    if filter_key == "contract_type":
+        return None
+    if suggested in options:
+        return suggested
+    return None
+
+
+def _solicitation_initialize_widget_state(key: str, value: object) -> None:
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def _solicitation_confidence_label(row: dict) -> str:
+    confidence = str(row.get("confidence") or "").strip().lower()
+    if confidence == "high":
+        return "High confidence"
+    if confidence == "medium":
+        return "Medium confidence"
+    if confidence == "low":
+        return "Low confidence"
+    return "Confidence unavailable"
+
+
+def _solicitation_status_line(item: dict) -> str:
+    row = item["row"]
+    status = _solicitation_decision_status_label(item.get("decision_status") or "needs_review")
+    if item.get("decision_status") == "suggested":
+        status = "Suggested"
+    if item.get("decision_status") == "not_available_in_dashboard_scope":
+        return "Extracted - mapping temporarily unavailable"
+    if item.get("decision_status") == "not_found_in_uploaded_package":
+        return "Not found in uploaded package"
+    return f"{_solicitation_confidence_label(row)} · {status}"
+
+
+def _solicitation_decision_status_label(status: str) -> str:
+    return {
+        "suggested": "Suggested",
+        "confirmed_by_analyst": "Confirmed by analyst",
+        "edited_by_analyst": "Edited by analyst",
+        "needs_review": "Needs review",
+        "not_found_in_uploaded_package": "Not found in uploaded package",
+        "not_available_in_dashboard_scope": "Not available in dashboard scope",
+        "excluded_by_analyst": "Excluded by analyst",
+    }.get(status, "Needs review")
+
+
+def _solicitation_audit_field_key(row: dict) -> str:
+    filter_key = row.get("filter_key")
+    if filter_key:
+        return filter_key
+    return re.sub(r"[^a-z0-9]+", "_", str(row.get("field") or "").lower()).strip("_")
+
+
+def _solicitation_review_group(row: dict, preselected: bool, missing: bool, mapping_unavailable: bool) -> str:
+    if missing or row.get("field") == "Funding Office":
+        return "manual"
+    if preselected and not mapping_unavailable:
+        return "suggested"
+    return "review"
+
+
+def _contract_type_filter_source(
+    field_name: str,
+    analyst_selected: bool,
+    selected_value: str | None,
+) -> str | None:
+    if field_name != "Contract Type":
+        return None
+    assert None in {"analyst_selection", "existing_pending_state", None}
+    if analyst_selected and selected_value:
+        return "analyst_selection"
+    active_contract_type = normalize_market_filters(st.session_state.get("active_market_filters") or {}).get("contract_type")
+    if active_contract_type and active_contract_type != ALL_CONTRACT_TYPES:
+        return "existing_pending_state"
+    return None
+
+
+def _preselection_decision_for_row(row: dict, preselected: bool) -> tuple[bool, str]:
+    field_name = row.get("field")
+    if field_name == "Contract Type":
+        return False, "Contract Type is analyst-controlled and never AI-preselected."
+    if field_name in {"Place of Performance", "Funding Office"}:
+        return False, f"{field_name} requires analyst confirmation."
+    if preselected:
+        return True, "Exact valid dashboard option with confirmed evidence."
+    if row.get("rejection_reason"):
+        return False, row["rejection_reason"]
+    if row.get("filter_option"):
+        return False, "Valid option available but analyst confirmation required."
+    return False, "No exact valid dashboard option was preselected."
+
+
+def _solicitation_review_rows(
+    rows: list[dict],
+    scope_preview: dict,
+    available_filter_options: dict,
+) -> list[dict]:
+    rows_by_field = _solicitation_rows_by_field(rows)
+    review_rows: list[dict] = []
+    seen: set[str] = set()
+    for field_name, filter_key in SOLICITATION_MARKET_REVIEW_FIELDS:
+        if field_name in seen:
+            continue
+        seen.add(field_name)
+        if field_name == "AAC":
+            aac_data = scope_preview.get("Office AAC", {})
+            value = aac_data.get("value")
+            row = {
+                "field": "AAC",
+                "filter_key": None,
+                "extracted_value": value,
+                "filter_option": None,
+                "mapped_filter_display": str(value or ""),
+                "mapping_status": "Context only" if value is not None else "Unmapped",
+                "preselect": False,
+                "confidence": aac_data.get("confidence"),
+                "evidence_snippet": aac_data.get("evidence_snippet", ""),
+                "evidence_source": aac_data.get("evidence_source", ""),
+                "evidence_locator": aac_data.get("evidence_locator", ""),
+                "validation_status": aac_data.get("validation_status", ""),
+            }
+        else:
+            row = rows_by_field.get(field_name)
+            if not row:
+                row = {
+                    "field": field_name,
+                    "filter_key": filter_key,
+                    "extracted_value": None,
+                    "filter_option": None,
+                    "mapped_filter_display": "",
+                    "mapping_status": "Unmapped",
+                    "preselect": False,
+                    "confidence": None,
+                    "evidence_snippet": "",
+                    "evidence_source": "",
+                    "evidence_locator": "",
+                    "validation_status": "",
+                }
+        preselected = is_solicitation_confirmed_filter(row, available_filter_options)
+        if field_name in {"Place of Performance", "Funding Office", "Contract Type"}:
+            preselected = False
+        check_key = _solicitation_review_session_key("use", field_name)
+        if check_key not in st.session_state:
+            st.session_state[check_key] = bool(preselected)
+        select_key = _solicitation_review_session_key("value", field_name)
+        if select_key not in st.session_state and row.get("filter_option") and field_name != "Contract Type":
+            options = _solicitation_filter_options_for_row(row, available_filter_options) if row.get("filter_key") else []
+            if row.get("filter_option") in options:
+                st.session_state[select_key] = row.get("filter_option")
+        selected_value = _solicitation_selected_review_value(row, available_filter_options)
+        analyst_selected = bool(st.session_state.get(check_key)) and bool(selected_value)
+        replacement = None
+        analyst_edited_fields = st.session_state.get("solicitation_analyst_edited_fields") or set()
+        analyst_edited = field_name in analyst_edited_fields
+        if analyst_selected and selected_value and row.get("filter_option") and selected_value != row.get("filter_option"):
+            replacement = selected_value
+        missing = row.get("extracted_value") is None and not row.get("filter_option")
+        mapping_unavailable = bool(row.get("mapping_unavailable")) or row.get("mapping_status") == SOLICITATION_MAPPING_UNAVAILABLE_STATUS
+        if missing:
+            status = "not_found_in_uploaded_package"
+        elif mapping_unavailable:
+            status = "not_available_in_dashboard_scope"
+        elif not row.get("filter_key"):
+            status = "needs_review"
+        elif not analyst_selected:
+            status = "excluded_by_analyst"
+        elif replacement or (analyst_selected and analyst_edited):
+            status = "edited_by_analyst"
+        elif preselected:
+            status = "suggested"
+        else:
+            status = "confirmed_by_analyst"
+        contract_type_source = _contract_type_filter_source(field_name, analyst_selected, selected_value)
+        preselection_allowed, preselection_reason = _preselection_decision_for_row(row, bool(preselected))
+        review_rows.append(
+            {
+                "row": row,
+                "field": field_name,
+                "field_key": _solicitation_audit_field_key(row),
+                "filter_key": row.get("filter_key"),
+                "preselected": bool(preselected),
+                "analyst_selected": bool(analyst_selected),
+                "analyst_replacement": replacement,
+                "selected_value": selected_value if analyst_selected else None,
+                "decision_status": status,
+                "group": _solicitation_review_group(row, preselected, missing, mapping_unavailable),
+                "contract_type_filter_source": contract_type_source,
+                "preselection_allowed": preselection_allowed,
+                "preselection_reason": preselection_reason,
+            }
+        )
+    return review_rows
+
+
+def _solicitation_review_counts(review_rows: list[dict]) -> dict[str, int]:
+    return {
+        "selected": sum(1 for item in review_rows if item.get("analyst_selected")),
+        "review": sum(1 for item in review_rows if item.get("group") == "review"),
+        "manual": sum(1 for item in review_rows if item.get("group") == "manual"),
+    }
+
+
+def _solicitation_source_completeness(review_rows: list[dict]) -> tuple[str, list[str]]:
+    by_field = {item["field"]: item for item in review_rows}
+    missing_critical = [
+        field
+        for field in SOLICITATION_SOURCE_COMPLETENESS_CRITICAL_FIELDS
+        if by_field.get(field, {}).get("group") == "manual"
+    ]
+    agency_ok = bool(by_field.get("Agency", {}).get("row", {}).get("extracted_value")) or bool(
+        by_field.get("Subagency / Bureau", {}).get("row", {}).get("extracted_value")
+    )
+    available_fields = sum(1 for item in review_rows if item.get("row", {}).get("extracted_value"))
+    if not agency_ok and available_fields < 3:
+        return "Insufficient market scope found", missing_critical
+    if missing_critical:
+        return "Partial market scope found", missing_critical
+    return "Complete market scope found", missing_critical
+
+
+def _solicitation_evidence_expander(row: dict) -> None:
+    if not _solicitation_row_has_evidence(row):
+        st.caption("—")
+        return
+    with st.expander("Evidence diagnostics", expanded=False):
+        st.caption(f"Filename: {row.get('evidence_source') or '—'}")
+        st.caption(f"Page or sheet: {row.get('evidence_locator') or '—'}")
+        st.caption(f"Quote: {_solicitation_truncate(row.get('evidence_snippet'), 300)}")
+        st.caption(f"Confidence: {str(row.get('confidence') or '—').title()}")
+        st.caption(f"Validation status: {_solicitation_validation_display(row)}")
+
+
+def _solicitation_display_value_for_item(item: dict) -> str:
+    row = item["row"]
+    selected = item.get("selected_value")
+    if selected:
+        return _format_solicitation_filter_option(row, selected)
+    if row.get("filter_option"):
+        return _format_solicitation_filter_option(row, row["filter_option"])
+    value = row.get("mapped_filter_display") or row.get("extracted_value")
+    return str(value or "Not found")
+
+
+def _render_scope_review_text(text: str, *, tone: str = "muted", target=None) -> None:
+    css_class = "scope-review-summary" if tone == "secondary" else "scope-review-helper"
+    renderer = target or st
+    renderer.markdown(f'<div class="{css_class}">{html.escape(text)}</div>', unsafe_allow_html=True)
+
+
+def _solicitation_manual_options_for_item(item: dict, available_filter_options: dict) -> list[str]:
+    row = item["row"]
+    options = _solicitation_filter_options_for_row(row, available_filter_options) if row.get("filter_key") else []
+    return [option for option in options if not str(option).lower().startswith("all ")]
+
+
+def _solicitation_select_placeholder_for_item(item: dict) -> str:
+    row = item["row"]
+    if row.get("filter_key") == "contract_type":
+        active_contract_type = normalize_market_filters(st.session_state.get("active_market_filters") or {}).get("contract_type")
+        if active_contract_type and active_contract_type != ALL_CONTRACT_TYPES:
+            return KEEP_CURRENT_SOLICITATION_FILTER
+        return "Select manually"
+    if row.get("filter_option") or row.get("extracted_value"):
+        return "Select..."
+    return KEEP_CURRENT_SOLICITATION_FILTER
+
+
+def _solicitation_dropdown_options_for_item(item: dict, available_filter_options: dict) -> list[str]:
+    row = item["row"]
+    options = _solicitation_manual_options_for_item(item, available_filter_options)
+    placeholder = _solicitation_select_placeholder_for_item(item)
+    selected = st.session_state.get(_solicitation_review_session_key("value", item["field"]))
+    if selected and selected not in options and selected != placeholder:
+        selected = None
+    if row.get("filter_option") and row.get("filter_option") in options and not selected:
+        selected = row.get("filter_option")
+    if selected in options:
+        return [placeholder, *options]
+    return [placeholder, *options]
+
+
+def _render_compact_solicitation_review_row(item: dict, available_filter_options: dict) -> None:
+    row = item["row"]
+    field_name = item["field"]
+    if field_name == "AAC":
+        return
+    check_key = _solicitation_review_session_key("use", field_name)
+    select_key = _solicitation_review_session_key("value", field_name)
+    is_manual = item.get("group") == "manual"
+    has_value = bool(row.get("filter_option") or row.get("extracted_value"))
+    use_col, label_col, value_col = st.columns([0.08, 0.30, 0.62])
+    with label_col:
+        st.markdown(f"**{field_name}**")
+    if is_manual:
+        options = _solicitation_dropdown_options_for_item(item, available_filter_options)
+        if len(options) > 1:
+            if select_key not in st.session_state:
+                st.session_state[select_key] = options[0]
+            with value_col:
+                selected = st.selectbox(
+                    f"{field_name} manual value",
+                    options,
+                    format_func=lambda option, mapping_row=row: _format_solicitation_filter_option(mapping_row, option),
+                    key=select_key,
+                    label_visibility="collapsed",
+                )
+                if selected == options[0]:
+                    _render_scope_review_text("Not found in uploaded package", target=value_col)
+                else:
+                    st.session_state[check_key] = True
+            return
+        with value_col:
+            st.markdown("Not found in uploaded package")
+            _render_scope_review_text("Needs manual selection", target=value_col)
+        return
+    _solicitation_initialize_widget_state(check_key, bool(st.session_state.get(check_key, item.get("preselected"))))
+    with use_col:
+        st.checkbox(
+            f"Use {field_name}",
+            key=check_key,
+            disabled=not has_value,
+            label_visibility="collapsed",
+        )
+    with value_col:
+        options = _solicitation_dropdown_options_for_item(item, available_filter_options)
+        if len(options) > 1 and row.get("filter_key"):
+            if select_key not in st.session_state:
+                suggested = None if row.get("filter_key") == "contract_type" else row.get("filter_option")
+                st.session_state[select_key] = suggested if suggested in options else options[0]
+            selected = st.selectbox(
+                f"{field_name} value",
+                options,
+                format_func=lambda option, mapping_row=row: _format_solicitation_filter_option(mapping_row, option),
+                key=select_key,
+                label_visibility="collapsed",
+            )
+            if selected != options[0] and selected != row.get("filter_option"):
+                st.session_state.setdefault("solicitation_analyst_edited_fields", set()).add(field_name)
+        else:
+            st.markdown(_solicitation_display_value_for_item(item))
+        if item.get("group") == "review":
+            _render_scope_review_text("Review before applying", target=value_col)
+        elif item.get("decision_status") == "not_available_in_dashboard_scope":
+            _render_scope_review_text("Mapping unavailable", target=value_col)
+
+
+def _render_compact_solicitation_review(
+    review_rows: list[dict],
+    available_filter_options: dict,
+) -> None:
+    suggested_rows = [
+        item
+        for item in review_rows
+        if item.get("group") in {"suggested", "review"} and item.get("field") != "AAC"
+    ]
+    manual_rows = [
+        item
+        for item in review_rows
+        if item.get("group") == "manual" and item.get("field") not in {"AAC"}
+    ]
+    with st.container(border=True):
+        if suggested_rows:
+            st.markdown("#### Suggested filters")
+            for item in suggested_rows:
+                _render_compact_solicitation_review_row(item, available_filter_options)
+        if manual_rows:
+            missing_labels = [item["field"] for item in manual_rows if not _solicitation_manual_options_for_item(item, available_filter_options)]
+            if missing_labels:
+                _render_scope_review_text("Missing: " + ", ".join(missing_labels))
+            st.markdown("#### Additional filters")
+            for item in manual_rows:
+                _render_compact_solicitation_review_row(item, available_filter_options)
+
+
+def _render_solicitation_review_group(
+    title: str,
+    items: list[dict],
+    available_filter_options: dict,
+) -> None:
+    st.markdown(f"#### {title} ({len(items)})")
+    for item in items:
+        _render_compact_solicitation_review_row(item, available_filter_options)
+
+
+def _render_solicitation_confirmation_summary(review_rows: list[dict]) -> None:
+    counts = _solicitation_review_counts(review_rows)
+    _render_scope_review_text(f"{counts['selected']} filters selected", tone="secondary")
+
+
+def _build_solicitation_audit_state(review_rows: list[dict]) -> list[dict]:
+    audit_rows = []
+    for item in review_rows:
+        row = item["row"]
+        final_value = item.get("selected_value") if item.get("analyst_selected") else None
+        audit_rows.append(
+            {
+                "field_key": item.get("field_key"),
+                "field": item.get("field"),
+                "raw_extracted_value": row.get("extracted_value"),
+                "validated_value": row.get("extracted_value"),
+                "resolved_value": row.get("mapped_filter_display") or row.get("filter_option"),
+                "hierarchy_match_level": row.get("hierarchy_match_level"),
+                "mapped_dashboard_value": row.get("filter_option"),
+                "preselection_allowed": bool(item.get("preselection_allowed")),
+                "preselection_reason": item.get("preselection_reason"),
+                "analyst_value": item.get("selected_value") if item.get("analyst_selected") else None,
+                "extracted_value": row.get("extracted_value"),
+                "mapped_value": row.get("filter_option"),
+                "validation_status": _solicitation_validation_display(row),
+                "confidence": str(row.get("confidence") or "").lower() or None,
+                "evidence": {
+                    "filename": row.get("evidence_source") or "",
+                    "page_or_sheet": row.get("evidence_locator") or "",
+                    "quote": row.get("evidence_snippet") or "",
+                },
+                "preselected": bool(item.get("preselected")),
+                "analyst_selected": bool(item.get("analyst_selected")),
+                "analyst_replacement": item.get("analyst_replacement")
+                or (final_value if item.get("decision_status") == "edited_by_analyst" else None),
+                "final_pending_value": final_value,
+                "decision_status": item.get("decision_status"),
+                "contract_type_filter_source": item.get("contract_type_filter_source"),
+            }
+        )
+    return audit_rows
+
+
+def _build_pending_filters_from_review_rows(review_rows: list[dict], available_filter_options: dict) -> dict:
+    pending_sidebar_filters: dict = {
+        "agency": None,
+        "bureau": None,
+        "contracting_office": None,
+        "market_filters": {},
+    }
+    for item in review_rows:
+        if not item.get("analyst_selected"):
+            continue
+        row = item["row"]
+        filter_key = row.get("filter_key")
+        selected = item.get("selected_value")
+        if filter_key == "contract_type":
+            source = item.get("contract_type_filter_source")
+            assert source in {"analyst_selection", "existing_pending_state", None}
+            if source != "analyst_selection":
+                st.session_state.setdefault("solicitation_invariant_diagnostics", []).append(
+                    {
+                        "invariant": "contract_type_final_source_not_ai",
+                        "status": "blocked",
+                        "contract_type_filter_source": source,
+                    }
+                )
+                continue
+        if not filter_key or not _solicitation_option_is_valid(filter_key, selected, available_filter_options):
+            continue
+        _apply_pending_filter_selection(pending_sidebar_filters, filter_key, selected)
+    sanitized, diagnostics = _sanitize_review_pending_filters(pending_sidebar_filters, available_filter_options)
+    if diagnostics:
+        st.session_state.setdefault("solicitation_invariant_diagnostics", []).extend(diagnostics)
+    return sanitized
+
+
+def _render_solicitation_detail_summary(
+    resolved_signals: dict,
+    scope_preview: dict,
+    rows: list[dict],
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+    extracted_org: object | None,
+) -> None:
+    rows_by_field = _solicitation_rows_by_field(rows)
+    st.markdown("**Solicitation overview**")
+    overview_rows = []
+    solicitation_data = scope_preview.get("Solicitation Number", {})
+    solicitation_number = str(solicitation_data.get("value") or "—")
+    title_value = _solicitation_summary_title(resolved_signals) or "—"
+    overview_rows.append(("Solicitation number", solicitation_number))
+    overview_rows.append(("Title", title_value))
+    overview_rows.append(("Extracted organization", str(extracted_org or "—")))
+    for label, value in overview_rows:
+        st.caption(f"{label}: {value}")
+
+    st.markdown("**Mapped summary**")
+    body_rows = []
+    summary_items, _ = _solicitation_summary_specs(scope_preview, rows_by_field)
+
+    def append_summary_row(label: str, display_value: str, status: str) -> None:
+        body_rows.append(
+            "<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{html.escape(_solicitation_truncate(display_value, 120))}</td>"
+            f"<td>{_solicitation_status_badge_html(status)}</td>"
+            "</tr>"
+        )
+
+    for label, field_key, is_filter in summary_items:
+        if label == "Extracted organization":
+            display_value = str(extracted_org or "—")
+            append_summary_row(label, display_value, "Context only")
+            continue
+        if label == "Solicitation number":
+            field_data = scope_preview.get("Solicitation Number", {})
+            display_value = str(field_data.get("value") or "—")
+            append_summary_row(label, display_value, "Context only")
+            title_value = _solicitation_summary_title(resolved_signals)
+            if title_value:
+                append_summary_row("Title", title_value, "Context only")
+            continue
+        if not is_filter:
+            field_data = scope_preview.get(field_key, {})
+            display_value = _solicitation_truncate(field_data.get("value"), 80) or "—"
+            append_summary_row(label, display_value, "Context only")
+            continue
+        row = rows_by_field.get(field_key)
+        if not row:
+            if field_key == "Funding Office":
+                append_summary_row(label, "No funding office extracted", "Unmapped")
+            else:
+                append_summary_row(label, "No value extracted", "Unmapped")
+            continue
+        status = _solicitation_workflow_status(row, user_overrides, available_filter_options)
+        if field_key == "Place of Performance":
+            parsed_text = _solicitation_pop_parsed_display(row.get("extracted_value"))
+            display_value = parsed_text or _solicitation_truncate(row.get("extracted_value"), 80) or "—"
+        else:
+            display_value = _solicitation_mapped_display_value(row, user_overrides, available_filter_options)
+        if field_key == "Funding Office" and row.get("extracted_value") is None:
+            display_value = "No funding office extracted"
+        append_summary_row(label, display_value, status)
+
+    st.markdown(
+        '<table class="solicitation-preview-table">'
+        "<thead><tr><th>Field</th><th>Value</th><th>Status</th></tr></thead><tbody>"
+        + "".join(body_rows)
+        + "</tbody></table>",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_solicitation_filters_found(
+    rows: list[dict],
+    available_filter_options: dict,
+    user_overrides: dict[str, str],
+    removed_fields: set[str],
+) -> None:
+    confirmed_rows = _solicitation_confirmed_display_rows(
+        rows,
+        available_filter_options,
+        user_overrides,
+        removed_fields,
+    )
+    st.markdown("#### Filters Found in Solicitation")
+    st.caption(
+        "These exact matches were found in the solicitation and matched to valid dashboard filters."
+    )
+    if not confirmed_rows:
+        st.caption("No exact matches were available as solicitation suggestions.")
+        return
+    header = st.columns([2.0, 3.0, 2.2, 0.35])
+    header[0].markdown("**Filter**")
+    header[1].markdown("**Matched dashboard value**")
+    header[2].markdown("**Status**")
+    header[3].markdown("")
+    for row, status_label in confirmed_rows:
+        field_name = row["field"]
+        cols = st.columns([2.0, 3.0, 2.2, 0.35])
+        cols[0].markdown(field_name)
+        cols[1].markdown(_format_solicitation_filter_option(row, row["filter_option"]))
+        cols[2].markdown(_solicitation_status_badge_html(status_label), unsafe_allow_html=True)
+        if cols[3].button(
+            "×",
+            key=f"remove_solicitation_filter_{row.get('filter_key') or field_name}",
+            help="Remove this filter from the pending solicitation scope",
+        ):
+            updated_removed = set(removed_fields)
+            updated_removed.add(field_name)
+            _solicitation_set_removed_fields(updated_removed)
+            user_overrides[field_name] = KEEP_REMOVED_SOLICITATION_FILTER
+            st.rerun()
+    office_row = next((row for row, _status in confirmed_rows if row.get("field") == "Contracting Office"), None)
+    if office_row:
+        office_code, _office_name = decode_contracting_office(office_row.get("filter_option") or "")
+        if office_code:
+            st.caption(
+                f"Contracting Office filters transactions by awarding office code {office_code}."
+            )
+
+
+def _render_solicitation_filter_dropdown(
+    row: dict,
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+    *,
+    key_prefix: str,
+    default_selection: str | None = None,
+    include_suggested_default: bool = False,
+    removed_fields: set[str] | None = None,
+) -> None:
+    field_name = row["field"]
+    removed_fields = removed_fields or set()
+    options = [KEEP_CURRENT_SOLICITATION_FILTER]
+    if is_solicitation_filter_removed(field_name, removed_fields):
+        options = [KEEP_REMOVED_SOLICITATION_FILTER, KEEP_CURRENT_SOLICITATION_FILTER]
+    options.extend(_solicitation_filter_options_for_row(row, available_filter_options))
+    selected_override = _solicitation_user_override(user_overrides, field_name)
+    if selected_override and selected_override in options:
+        default_selection = selected_override
+    elif is_solicitation_filter_removed(field_name, removed_fields):
+        default_selection = KEEP_REMOVED_SOLICITATION_FILTER
+    elif include_suggested_default and row.get("filter_option") and row["filter_option"] in options:
+        default_selection = row["filter_option"]
+    elif not default_selection or default_selection not in options:
+        default_selection = KEEP_CURRENT_SOLICITATION_FILTER
+    selected = st.selectbox(
+        field_name,
+        options,
+        index=options.index(default_selection),
+        format_func=lambda option, mapping_row=row: _format_solicitation_filter_option(mapping_row, option),
+        key=f"{key_prefix}_{row.get('filter_key') or field_name}",
+        label_visibility="collapsed",
+    )
+    user_overrides[field_name] = selected
+
+
+def _render_solicitation_optional_filters(
+    rows: list[dict],
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+    *,
+    funding_office_extracted: bool,
+    removed_fields: set[str],
+) -> None:
+    optional_rows = _solicitation_optional_filter_rows(
+        rows,
+        available_filter_options,
+        removed_fields=removed_fields,
+        funding_office_extracted=funding_office_extracted,
+    )
+    if not optional_rows:
+        st.caption("All extracted market filters are represented in the review groups.")
+        return
+    st.markdown("#### Want to add any additional filters?")
+    st.caption(
+        "Only unresolved, review-only, removed, or manual fields appear here."
+    )
+    for row in optional_rows:
+        field_name = row["field"]
+        st.markdown(f"**{field_name}**")
+        hint = _solicitation_optional_filter_hint(
+            row,
+            available_filter_options,
+            funding_office_extracted=funding_office_extracted,
+        )
+        if hint:
+            st.caption(hint)
+        if is_solicitation_filter_removed(field_name, removed_fields) and row.get("filter_option"):
+            if st.button(
+                "Restore extracted value",
+                key=f"restore_solicitation_filter_{row.get('filter_key') or field_name}",
+            ):
+                updated_removed = set(removed_fields)
+                updated_removed.discard(field_name)
+                _solicitation_set_removed_fields(updated_removed)
+                user_overrides[field_name] = row["filter_option"]
+                st.rerun()
+        _render_solicitation_filter_dropdown(
+            row,
+            user_overrides,
+            available_filter_options,
+            key_prefix="solicitation_optional",
+            default_selection=(
+                KEEP_REMOVED_SOLICITATION_FILTER
+                if is_solicitation_filter_removed(field_name, removed_fields)
+                else KEEP_CURRENT_SOLICITATION_FILTER
+            ),
+            removed_fields=removed_fields,
+        )
+
+
+def _render_solicitation_full_details_content(
+    resolved_signals: dict,
+    scope_preview: dict,
+    rows: list[dict],
+    context_rows: list[dict],
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+    extracted_org: object | None,
+    *,
+    run_id: str | None = None,
+) -> None:
+    if True:
+        if run_id:
+            st.caption(f"Run ID: {run_id}")
+        summary = (resolved_signals.get("summary") or {}) if isinstance(resolved_signals, dict) else {}
+        if summary.get("profile") == "market_scope_fast" or summary.get("extractionProfile") == "market_scope_fast":
+            detail_rows = build_fast_scope_detail_rows(resolved_signals)
+            display_rows = []
+            for item in detail_rows:
+                value = item.get("value")
+                if isinstance(value, dict):
+                    value = None
+                display_rows.append(
+                    {
+                        "Signal": item.get("label"),
+                        "Value": _solicitation_truncate(value, 240) if value is not None else "—",
+                        "Confidence": item.get("confidence") or "",
+                        "Validation": item.get("validation_status") or "",
+                        "Source": item.get("source") or "",
+                        "Page": item.get("page") or "",
+                        "Quote": _solicitation_truncate(item.get("quote"), 220),
+                    }
+                )
+            st.caption(f"Fast market-scope profile ({fast_scope_requested_count(resolved_signals)} signals)")
+            if display_rows:
+                st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("No fast-scope signals available.")
+            return
+        _render_solicitation_detail_summary(
+            resolved_signals,
+            scope_preview,
+            rows,
+            user_overrides,
+            available_filter_options,
+            extracted_org,
+        )
+        st.markdown("**Extracted signals**")
+        if not context_rows:
+            st.caption("No extracted solicitation signals were available.")
+        else:
+            signal_rows = [
+                {
+                    "Field": row["field"],
+                    "Extracted value": _solicitation_truncate(row.get("extracted_value"), 400),
+                    "Confidence": row.get("confidence") or "",
+                    "Evidence": _solicitation_truncate(row.get("evidence_snippet"), 240),
+                }
+                for row in context_rows
+            ]
+            st.dataframe(pd.DataFrame(signal_rows), use_container_width=True, hide_index=True)
+
+        evidence_rows = []
+        seen_fields: set[str] = set()
+        for row in [*rows, *context_rows]:
+            field_name = row.get("field")
+            if not field_name or field_name in seen_fields:
+                continue
+            snippet = str(row.get("evidence_snippet") or "").strip()
+            if not snippet:
+                field_data = scope_preview.get(field_name, {})
+                snippet = str(field_data.get("evidence_snippet") or "").strip()
+            if not snippet:
+                continue
+            seen_fields.add(field_name)
+            evidence_rows.append(
+                {
+                    "Field": field_name,
+                    "Extracted value": _solicitation_truncate(row.get("extracted_value"), 160),
+                    "Confidence": row.get("confidence") or "",
+                    "Source document": row.get("evidence_source")
+                    or scope_preview.get(field_name, {}).get("evidence_source", ""),
+                    "Locator / page": row.get("evidence_locator")
+                    or scope_preview.get(field_name, {}).get("evidence_locator", ""),
+                    "Snippet": _solicitation_truncate(snippet, 320),
+                }
+            )
+        if evidence_rows:
+            st.markdown("**Signal evidence**")
+            st.dataframe(pd.DataFrame(evidence_rows), use_container_width=True, hide_index=True)
+
+
+def _solicitation_filter_options_for_row(row: dict, available_filter_options: dict) -> list[str]:
+    filter_key = row.get("filter_key")
+    if filter_key == "agency":
+        return available_filter_options["agencies"]
+    if filter_key == "bureau":
+        return available_filter_options.get("bureaus", [ALL_BUREAUS])
+    if filter_key == "contracting_office":
+        return available_filter_options["contracting_offices"]
+    if filter_key == "funding_office":
+        return available_filter_options.get("funding_offices", [ALL_FUNDING_OFFICES])
+    if filter_key == "naics_code":
+        return available_filter_options["naics"]
+    if filter_key == "psc_code":
+        return available_filter_options["psc"]
+    if filter_key == "contract_type":
+        return available_filter_options["contract_types"]
+    if filter_key == "set_aside_type":
+        return available_filter_options["set_asides"]
+    if filter_key == "pop_state":
+        return available_filter_options["pop_locations"]
+    return []
+
+
+def _format_solicitation_filter_option(row: dict, option: str) -> str:
+    if option in {KEEP_CURRENT_SOLICITATION_FILTER, KEEP_REMOVED_SOLICITATION_FILTER}:
+        return option
+    filter_key = row.get("filter_key")
+    if filter_key == "agency":
+        return option
+    if filter_key == "bureau":
+        return option
+    if filter_key == "contracting_office":
+        return format_contracting_office_option(option)
+    if filter_key == "funding_office":
+        return format_funding_office_option(option)
+    if filter_key == "pop_state":
+        return option if option in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES) else format_code_description_option(option)
+    if filter_key in ("naics_code", "psc_code", "contract_type", "set_aside_type"):
+        defaults = {
+            "naics_code": ALL_NAICS_CODES,
+            "psc_code": ALL_PRODUCT_SERVICE_CODES,
+            "contract_type": ALL_CONTRACT_TYPES,
+            "set_aside_type": ALL_SET_ASIDE_TYPES,
+        }
+        default_option = defaults[filter_key]
+        return option if option == default_option else format_code_description_option(option)
+    return option
+
+
+def _solicitation_option_is_valid(
+    filter_key: str | None,
+    selected: str | None,
+    available_filter_options: dict,
+) -> bool:
+    if not selected or selected in {KEEP_CURRENT_SOLICITATION_FILTER, KEEP_REMOVED_SOLICITATION_FILTER}:
+        return False
+    option_map = {
+        "agency": "agencies",
+        "bureau": "bureaus",
+        "contracting_office": "contracting_offices",
+        "funding_office": "funding_offices",
+        "naics_code": "naics",
+        "psc_code": "psc",
+        "contract_type": "contract_types",
+        "set_aside_type": "set_asides",
+        "pop_state": "pop_locations",
+    }
+    options_key = option_map.get(filter_key or "")
+    if not options_key:
+        return False
+    return selected in available_filter_options.get(options_key, [])
+
+
+def _apply_pending_filter_selection(
+    pending_sidebar_filters: dict,
+    filter_key: str,
+    selected: str,
+) -> None:
+    if filter_key == "agency":
+        pending_sidebar_filters["agency"] = selected
+    elif filter_key == "bureau":
+        pending_sidebar_filters["bureau"] = selected
+    elif filter_key == "contracting_office":
+        pending_sidebar_filters["contracting_office"] = selected
+    elif filter_key == "funding_office":
+        pending_sidebar_filters["market_filters"]["funding_office"] = selected
+    else:
+        pending_sidebar_filters["market_filters"][filter_key] = selected
+
+
+def _selected_is_hidden_broad_default(filter_key: str | None, selected: str | None) -> bool:
+    if not selected:
+        return False
+    broad_defaults = {
+        "bureau": ALL_BUREAUS,
+        "contracting_office": ALL_CONTRACTING_OFFICES,
+        "funding_office": ALL_FUNDING_OFFICES,
+        "naics_code": ALL_NAICS_CODES,
+        "psc_code": ALL_PRODUCT_SERVICE_CODES,
+        "contract_type": ALL_CONTRACT_TYPES,
+        "set_aside_type": ALL_SET_ASIDE_TYPES,
+        "pop_state": ALL_POP_LOCATIONS,
+    }
+    return selected == broad_defaults.get(filter_key or "")
+
+
+def _sanitize_review_pending_filters(
+    pending_sidebar_filters: dict,
+    available_filter_options: dict,
+) -> tuple[dict, list[dict]]:
+    sanitized = {
+        "agency": pending_sidebar_filters.get("agency"),
+        "bureau": pending_sidebar_filters.get("bureau"),
+        "contracting_office": pending_sidebar_filters.get("contracting_office"),
+        "market_filters": dict(pending_sidebar_filters.get("market_filters") or {}),
+    }
+    diagnostics: list[dict] = []
+    agency = sanitized.get("agency")
+    bureau = sanitized.get("bureau")
+    if agency and bureau and bureau != ALL_BUREAUS and bureau not in available_filter_options.get("bureaus", []):
+        diagnostics.append(
+            {
+                "invariant": "subagency_parent_child_validation",
+                "status": "blocked",
+                "agency": agency,
+                "subagency": bureau,
+                "reason": "subagency_value is not in valid_subagencies_for(agency_value)",
+            }
+        )
+        sanitized["bureau"] = None
+    if sanitized.get("agency") and sanitized.get("bureau") == sanitized.get("agency"):
+        diagnostics.append(
+            {
+                "invariant": "known_subagency_cannot_populate_agency",
+                "status": "blocked",
+                "agency": sanitized.get("agency"),
+                "subagency": sanitized.get("bureau"),
+            }
+        )
+        sanitized["agency"] = None
+        sanitized["bureau"] = None
+    for filter_key, selected in [
+        ("bureau", sanitized.get("bureau")),
+        ("contracting_office", sanitized.get("contracting_office")),
+        *list((sanitized.get("market_filters") or {}).items()),
+    ]:
+        if _selected_is_hidden_broad_default(filter_key, selected):
+            diagnostics.append(
+                {
+                    "invariant": "no_failed_match_uses_broad_fallback",
+                    "status": "blocked",
+                    "filter_key": filter_key,
+                    "selected": selected,
+                    "reason": "Broad defaults cannot be introduced by solicitation mapping.",
+                }
+            )
+            if filter_key == "bureau":
+                sanitized["bureau"] = None
+            elif filter_key == "contracting_office":
+                sanitized["contracting_office"] = None
+            else:
+                sanitized["market_filters"].pop(filter_key, None)
+    return sanitized, diagnostics
+
+
+def _build_confirmed_pending_filters(
+    rows: list[dict],
+    available_filter_options: dict,
+    removed_fields: set[str] | None = None,
+) -> dict:
+    """Apply only high-confidence exact/validated filters; never include suggested or manual picks."""
+    removed_fields = removed_fields or set()
+    pending_sidebar_filters: dict = {
+        "agency": None,
+        "bureau": None,
+        "contracting_office": None,
+        "market_filters": {},
+    }
+    for row in rows:
+        filter_key = row.get("filter_key")
+        if not filter_key or not is_solicitation_confirmed_filter(row, available_filter_options):
+            continue
+        if filter_key == "contract_type":
+            continue
+        if is_solicitation_filter_removed(row.get("field") or "", removed_fields):
+            continue
+        selected = row["filter_option"]
+        if not _solicitation_option_is_valid(filter_key, selected, available_filter_options):
+            continue
+        _apply_pending_filter_selection(pending_sidebar_filters, filter_key, selected)
+    sanitized, diagnostics = _sanitize_review_pending_filters(pending_sidebar_filters, available_filter_options)
+    if diagnostics:
+        st.session_state.setdefault("solicitation_invariant_diagnostics", []).extend(diagnostics)
+    return sanitized
+
+
+def _build_reviewed_pending_filters(
+    rows: list[dict],
+    user_overrides: dict[str, str],
+    available_filter_options: dict,
+    removed_fields: set[str] | None = None,
+) -> dict:
+    """Apply confirmed filters plus explicit user-reviewed optional filter selections."""
+    removed_fields = removed_fields or set()
+    pending_sidebar_filters: dict = {
+        "agency": None,
+        "bureau": None,
+        "contracting_office": None,
+        "market_filters": {},
+    }
+    for row in rows:
+        filter_key = row.get("filter_key")
+        field_name = row.get("field") or ""
+        if not filter_key:
+            continue
+        user_override = _solicitation_user_override(user_overrides, field_name)
+        selected = resolve_solicitation_filter_pending_value(
+            row,
+            removed_fields=removed_fields,
+            user_override=user_override,
+            keep_current_token=KEEP_CURRENT_SOLICITATION_FILTER,
+            keep_removed_token=KEEP_REMOVED_SOLICITATION_FILTER,
+            is_confirmed_filter=is_solicitation_confirmed_filter,
+            option_is_valid=_solicitation_option_is_valid,
+            available_filter_options=available_filter_options,
+        )
+        if filter_key == "contract_type" and not (
+            user_override
+            and user_override not in {KEEP_CURRENT_SOLICITATION_FILTER, KEEP_REMOVED_SOLICITATION_FILTER}
+            and _solicitation_option_is_valid(filter_key, user_override, available_filter_options)
+        ):
+            continue
+        if not selected:
+            continue
+        _apply_pending_filter_selection(pending_sidebar_filters, filter_key, selected)
+    sanitized, diagnostics = _sanitize_review_pending_filters(pending_sidebar_filters, available_filter_options)
+    if diagnostics:
+        st.session_state.setdefault("solicitation_invariant_diagnostics", []).extend(diagnostics)
+    return sanitized
+
+
+def _should_show_solicitation_scope_review() -> bool:
+    return solicitation_scope_review_visible(
+        has_resolved_signals=bool(st.session_state.get("solicitation_resolved_signals")),
+        scope_applied=bool(st.session_state.get("solicitation_scope_applied")),
+        review_open=bool(st.session_state.get("solicitation_scope_review_open")),
+    )
+
+
+def _solicitation_extraction_elapsed_sec() -> float | None:
+    summary = (st.session_state.get("solicitation_extraction_result") or {}).get("summary") or {}
+    elapsed = summary.get("elapsedSec")
+    return float(elapsed) if elapsed is not None else None
+
+
+def _mark_solicitation_scope_applied(
+    reviewed_pending_filters: dict,
+    *,
+    mapping_result: dict,
+    resolved_signals: dict,
+    scope_preview: dict,
+) -> None:
+    rows = mapping_result.get("rows") or []
+    available_filter_options = mapping_result.get("available_filter_options") or {}
+    audit_state = st.session_state.get("solicitation_scope_audit_state") or []
+    mapped_count = sum(1 for item in audit_state if isinstance(item, dict) and item.get("final_pending_value"))
+    sol_data = scope_preview.get("Solicitation Number", {})
+    st.session_state.solicitation_scope_applied = True
+    st.session_state.solicitation_scope_review_open = False
+    st.session_state.solicitation_comparable_market = False
+    if reviewed_pending_filters.get("contracting_office"):
+        st.session_state.solicitation_saved_contracting_office = reviewed_pending_filters["contracting_office"]
+    st.session_state.solicitation_applied_metadata = {
+        "solicitation_number": str(sol_data.get("value") or "").strip(),
+        "title": _solicitation_summary_title(resolved_signals),
+        "status_alert": solicitation_status_alert_text(resolved_signals),
+        "mapped_filter_count": mapped_count,
+        "source_completeness": (mapping_result.get("debug") or {}).get("source_completeness"),
+        "elapsed_sec": _solicitation_extraction_elapsed_sec(),
+        "requested_signal_count": fast_scope_requested_count(resolved_signals),
+    }
+
+
+def clear_solicitation_scope() -> None:
+    last_applied = st.session_state.get("solicitation_last_applied_filters") or {}
+    if last_applied.get("contracting_office"):
+        st.session_state.active_contracting_office = ALL_CONTRACTING_OFFICES
+    market_filters = normalize_market_filters(st.session_state.active_market_filters)
+    defaults = default_market_filters()
+    for key in (last_applied.get("market_filters") or {}):
+        if key in defaults:
+            market_filters[key] = defaults[key]
+    st.session_state.active_market_filters = market_filters
+    st.session_state.solicitation_scope_applied = False
+    st.session_state.solicitation_scope_review_open = False
+    st.session_state.solicitation_comparable_market = False
+    st.session_state.pop("solicitation_saved_contracting_office", None)
+    st.session_state.pop("solicitation_applied_metadata", None)
+
+
+def render_solicitation_sidebar_scope() -> None:
+    if not st.session_state.get("solicitation_scope_applied"):
+        return
+    if st.session_state.get("solicitation_scope_review_open"):
+        return
+    metadata = st.session_state.get("solicitation_applied_metadata") or {}
+    if not metadata and not st.session_state.get("solicitation_resolved_signals"):
+        return
+    st.markdown("## Solicitation Scope")
+    sol_number = metadata.get("solicitation_number") or "—"
+    title = metadata.get("title") or "—"
+    mapped_count = metadata.get("mapped_filter_count")
+    st.caption(f"**{sol_number}**")
+    st.caption(_solicitation_truncate(title, 72) or "—")
+    if mapped_count is not None:
+        st.caption(f"{mapped_count} filters confirmed by analyst")
+    status_alert = metadata.get("status_alert")
+    if status_alert:
+        st.caption(f"Status: {_solicitation_truncate(status_alert, 90)}")
+    if st.session_state.get("solicitation_comparable_market"):
+        st.caption("Comparable market mode (office filter removed)")
+    if st.button("Review / Edit Scope", key="sidebar_review_solicitation_scope", use_container_width=True):
+        st.session_state.solicitation_scope_review_open = True
+        st.rerun()
+    if st.button("Clear Solicitation Scope", key="sidebar_clear_solicitation_scope", use_container_width=True):
+        clear_solicitation_scope()
+        st.rerun()
+
+
+def _render_solicitation_scope_heading(resolved_signals: dict, scope_preview: dict) -> None:
+    sol_data = scope_preview.get("Solicitation Number", {})
+    sol_number = str(sol_data.get("value") or "").strip()
+    if not sol_number:
+        value, _, _, _ = first_signal_value(resolved_signals, ["rfp_solicitation_number_v1", "rfp_solicitation_id_v1"])
+        sol_number = str(value or "").strip()
+    title = _solicitation_summary_title(resolved_signals)
+    if sol_number and title:
+        st.markdown(f"### {html.escape(sol_number)} — {html.escape(title)}")
+    elif sol_number:
+        st.markdown(f"### {html.escape(sol_number)}")
+    elif title:
+        st.markdown(f"### {html.escape(title)}")
+    elapsed = _solicitation_extraction_elapsed_sec()
+    if elapsed is not None:
+        st.markdown(
+            f'<div class="solicitation-scope-muted">Market scope extracted in {int(round(elapsed))} seconds</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def _render_solicitation_status_alert(resolved_signals: dict) -> None:
+    alert = solicitation_status_alert_text(resolved_signals)
+    if not alert:
+        return
+    st.markdown(
+        f'<div class="solicitation-status-alert-card">Opportunity status: {html.escape(alert)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_extraction_diagnostics_content(resolved_signals: dict | None = None) -> None:
+    extraction_result = st.session_state.get("solicitation_extraction_result") or {}
+    summary = extraction_result.get("summary") or {}
+    package_diagnostics = summary.get("packageDiagnostics") or {}
+    build_info = package_diagnostics.get("buildInfo") or {}
+    findings = dedupe_extraction_findings(st.session_state.get("solicitation_extraction_diagnostics") or [])
+    ocr_status = ocr_environment_status()
+    if True:
+        st.caption("Run metadata, cache, tokens, OCR environment, and build/version details.")
+        diag_payload = {
+            "runId": summary.get("runId") or st.session_state.get("solicitation_loaded_run_id"),
+            "model": package_diagnostics.get("model") or build_info.get("model"),
+            "reasoningEffort": package_diagnostics.get("reasoningEffort") or build_info.get("reasoningEffort"),
+            "elapsedSec": summary.get("elapsedSec"),
+            "cacheHit": package_diagnostics.get("cacheHit"),
+            "inputTokens": package_diagnostics.get("inputTokens"),
+            "outputTokens": package_diagnostics.get("outputTokens"),
+            "reasoningTokens": package_diagnostics.get("reasoningTokens"),
+            "openaiRequestCount": package_diagnostics.get("openaiRequestCount"),
+            "requestedSignalCount": fast_scope_requested_count(resolved_signals or {}),
+            "ocrEnvironment": ocr_status,
+            "buildInfo": build_info,
+        }
+        st.json(diag_payload)
+        blocking = [item for item in findings if not is_ocr_environment_notice(str(item.get("message") or ""))]
+        env_notices = [item for item in findings if is_ocr_environment_notice(str(item.get("message") or ""))]
+        if env_notices:
+            st.markdown("**OCR environment**")
+            st.json(env_notices)
+        if blocking:
+            st.markdown("**Validation / extraction findings**")
+            st.json(blocking)
+        if st.session_state.get("solicitation_scope_applied"):
+            st.markdown("**Analyzed USAspending scope (audit)**")
+            market_filters = normalize_market_filters(st.session_state.get("active_market_filters") or {})
+            office_code, office_name = decode_contracting_office(st.session_state.get("active_contracting_office") or "")
+            naics_code, naics_label = decode_option(market_filters.get("naics_code", ALL_NAICS_CODES))
+            psc_code, psc_label = decode_option(market_filters.get("psc_code", ALL_PRODUCT_SERVICE_CODES))
+            contract_code, contract_label = decode_option(market_filters.get("contract_type", ALL_CONTRACT_TYPES))
+            set_aside_code, set_aside_label = decode_option(market_filters.get("set_aside_type", ALL_SET_ASIDE_TYPES))
+            pop_code, pop_label = decode_option(market_filters.get("pop_state", ALL_POP_LOCATIONS))
+            funding_code, funding_label = decode_option(market_filters.get("funding_office", ALL_FUNDING_OFFICES))
+            scope_audit = {
+                "fiscalYear": st.session_state.get("active_fiscal_year"),
+                "agency": st.session_state.get("active_agency"),
+                "subagency": st.session_state.get("active_bureau"),
+                "contractingOffice": st.session_state.get("active_contracting_office"),
+                "awardingOfficeCode": office_code,
+                "awardingOfficeName": office_name,
+                "fundingOffice": funding_label if funding_code != ALL_FUNDING_OFFICES else ALL_FUNDING_OFFICES,
+                "naics": naics_label,
+                "psc": psc_label,
+                "contractType": contract_label,
+                "setAside": set_aside_label,
+                "placeOfPerformance": pop_label,
+                "comparableMarketMode": bool(st.session_state.get("solicitation_comparable_market")),
+            }
+            st.json(scope_audit)
+            validation = st.session_state.get("last_analysis_validation_metadata") or {}
+            if validation:
+                st.markdown("**Last analyzed metrics (audit)**")
+                st.json(
+                    {
+                        "transactionRowCount": validation.get("transaction_row_count"),
+                        "uniqueAwardCount": validation.get("unique_award_count"),
+                        "totalObligations": validation.get("total_obligations_returned"),
+                        "dataSource": validation.get("data_source"),
+                        "usaspendingFilterSummary": validation.get("usaspending_filter_summary"),
+                    }
+                )
+        st.markdown("**Full extraction summary**")
+        st.json(summary)
+
+
+def render_solicitation_extraction_diagnostics(resolved_signals: dict | None = None) -> None:
+    with st.expander("Extraction diagnostics", expanded=False):
+        _render_extraction_diagnostics_content(resolved_signals)
+
+
+def render_solicitation_baseline_notice() -> None:
+    metadata = st.session_state.get("solicitation_applied_metadata") or {}
+    if not metadata or st.session_state.get("solicitation_scope_review_open"):
+        return
+    sol_number = metadata.get("solicitation_number")
+    mapped_count = metadata.get("mapped_filter_count")
+    if not sol_number:
+        return
+    suffix = f" · {mapped_count} filters confirmed by analyst" if mapped_count is not None else ""
+    st.markdown(
+        f'<div class="solicitation-baseline-line">Analysis based on solicitation {html.escape(sol_number)}{html.escape(suffix)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_solicitation_scope_preview(
+    agency_records: list[dict],
+    pending_agency: str,
+    pending_bureau: str | None,
+    pending_year: int,
+    *,
+    show_advanced_upload: bool = True,
+) -> bool:
+    if not _should_show_solicitation_scope_review():
+        return False
+    resolved_signals = st.session_state.get("solicitation_resolved_signals")
+    scope_preview = st.session_state.get("solicitation_scope_preview")
+    if not resolved_signals or not scope_preview:
+        return False
+
+    user_overrides: dict[str, str] = st.session_state.get("solicitation_user_filter_overrides") or {}
+    removed_fields = _solicitation_removed_fields()
+    organization_seed = map_solicitation_organization(scope_preview, agency_records, int(pending_year))
+    agency_widget_value = st.session_state.get(_solicitation_review_session_key("value", "Agency"))
+    scoped_agency = agency_widget_value if agency_widget_value in agency_names_from_records(agency_records) else _solicitation_user_override(user_overrides, "Agency")
+    if not scoped_agency or scoped_agency == KEEP_CURRENT_SOLICITATION_FILTER:
+        scoped_agency = organization_seed.get("mapped_agency") or pending_agency
+    scoped_bureau_options = solicitation_bureau_options_for_agency(agency_records, scoped_agency, int(pending_year))
+    bureau_widget_value = st.session_state.get(_solicitation_review_session_key("value", "Subagency / Bureau"))
+    scoped_bureau = bureau_widget_value if bureau_widget_value in scoped_bureau_options else _solicitation_user_override(user_overrides, "Subagency / Bureau")
+    if not scoped_bureau or scoped_bureau == KEEP_CURRENT_SOLICITATION_FILTER:
+        scoped_bureau = organization_seed.get("mapped_bureau") or pending_bureau
+    if canonical_bureau_name(scoped_bureau) not in scoped_bureau_options:
+        scoped_bureau = ALL_BUREAUS
+        st.session_state.pop(_solicitation_review_session_key("value", "Subagency / Bureau"), None)
+        st.session_state.pop(_solicitation_review_session_key("value", "Contracting Office"), None)
+        st.session_state.pop(_solicitation_review_session_key("value", "Funding Office"), None)
+    review_hierarchy_scope = (scoped_agency, canonical_bureau_name(scoped_bureau))
+    if st.session_state.get("solicitation_review_hierarchy_scope") != review_hierarchy_scope:
+        st.session_state.solicitation_review_hierarchy_scope = review_hierarchy_scope
+        st.session_state.pop(_solicitation_review_session_key("value", "Contracting Office"), None)
+        st.session_state.pop(_solicitation_review_session_key("value", "Funding Office"), None)
+
+    mapping_cache_key = {
+        "run_id": st.session_state.get("solicitation_loaded_run_id"),
+        "agency": scoped_agency,
+        "bureau": scoped_bureau,
+        "year": int(pending_year),
+    }
+    cached_mapping = st.session_state.get("solicitation_mapping_result")
+    cached_key = st.session_state.get("solicitation_mapping_cache_key")
+    if isinstance(cached_mapping, dict) and cached_key == mapping_cache_key:
+        mapping_result = cached_mapping
+    else:
+        st.session_state.solicitation_mapping_status = "running"
+        try:
+            mapping_result = map_solicitation_signals_to_dashboard_filters(
+                scope_preview,
+                agency_records,
+                int(pending_year),
+                mapped_agency=scoped_agency,
+                mapped_bureau=scoped_bureau,
+            )
+            st.session_state.solicitation_mapping_status = "completed"
+        except TimeoutError as exc:
+            mapping_result = degraded_solicitation_mapping_result(
+                scope_preview,
+                agency_records,
+                int(pending_year),
+                mapped_agency=scoped_agency,
+                mapped_bureau=scoped_bureau,
+                reason=f"Dashboard option matching timed out: {exc}",
+            )
+            st.session_state.solicitation_mapping_status = "timed_out"
+        except Exception as exc:
+            mapping_result = degraded_solicitation_mapping_result(
+                scope_preview,
+                agency_records,
+                int(pending_year),
+                mapped_agency=scoped_agency,
+                mapped_bureau=scoped_bureau,
+                reason=f"Dashboard option matching failed: {exc}",
+            )
+            st.session_state.solicitation_mapping_status = "failed"
+        st.session_state.solicitation_mapping_result = mapping_result
+        st.session_state.solicitation_mapping_cache_key = mapping_cache_key
+    rows = mapping_result["rows"]
+    available_filter_options = mapping_result["available_filter_options"]
+    funding_office_extracted = scope_preview.get("Funding Office", {}).get("value") is not None
+    rows_by_field = _solicitation_rows_by_field(rows)
+    org_row = rows_by_field.get("Extracted Organization")
+    extracted_org = (
+        org_row.get("extracted_value")
+        if org_row
+        else scope_preview.get("Issuing Agency", {}).get("value")
+    )
+    context_rows = build_solicitation_opportunity_context_rows(resolved_signals, scope_preview)
+    optional_rows = _solicitation_optional_filter_rows(
+        rows,
+        available_filter_options,
+        removed_fields=removed_fields,
+        funding_office_extracted=funding_office_extracted,
+    )
+
+    st.markdown('<div class="market-summary-panel">', unsafe_allow_html=True)
+    st.markdown('<div class="market-summary-title">Solicitation Scope Review</div>', unsafe_allow_html=True)
+    _render_solicitation_scope_heading(resolved_signals, scope_preview)
+    _render_solicitation_status_alert(resolved_signals)
+    mapping_diagnostics = available_filter_options.get("mapping_diagnostics") or {}
+    unavailable_fields = available_filter_options.get("mapping_unavailable_fields") or []
+    mapping_status = st.session_state.get("solicitation_mapping_status", "not_started")
+
+    review_started = time.time()
+    review_rows = _solicitation_review_rows(rows, scope_preview, available_filter_options)
+    review_elapsed = round(time.time() - review_started, 3)
+    completeness_started = time.time()
+    source_completeness, missing_market_fields = _solicitation_source_completeness(review_rows)
+    completeness_elapsed = round(time.time() - completeness_started, 3)
+    extracted_count = sum(
+        1
+        for item in review_rows
+        if item.get("field") != "AAC" and item.get("row", {}).get("extracted_value") is not None
+    )
+    selected_count = sum(
+        1
+        for item in review_rows
+        if item.get("field") != "AAC" and item.get("analyst_selected")
+    )
+    review_count = sum(
+        1
+        for item in review_rows
+        if item.get("field") != "AAC" and not item.get("analyst_selected")
+    )
+    _render_scope_review_text(
+        f"{extracted_count} fields extracted · {selected_count} filters selected · {review_count} require review",
+        tone="secondary",
+    )
+    if unavailable_fields:
+        _render_scope_review_text("Some optional filters were not available and can be entered manually.")
+
+    _render_compact_solicitation_review(review_rows, available_filter_options)
+    review_rebuild_started = time.time()
+    review_rows = _solicitation_review_rows(rows, scope_preview, available_filter_options)
+    review_rebuild_elapsed = round(time.time() - review_rebuild_started, 3)
+    reviewed_pending_filters = _build_pending_filters_from_review_rows(review_rows, available_filter_options)
+    audit_state = _build_solicitation_audit_state(review_rows)
+    st.session_state.solicitation_scope_audit_state = audit_state
+
+    st.session_state.solicitation_user_filter_overrides = user_overrides
+
+    mapping_result["debug"]["review_audit_state"] = audit_state
+    mapping_result["debug"]["source_completeness"] = source_completeness
+    mapping_result["debug"]["missing_market_fields"] = missing_market_fields
+    mapping_result["debug"]["review_stage_events"] = [
+        {
+            "stage": "build solicitation audit rows",
+            "status": "completed",
+            "elapsedSeconds": review_elapsed,
+        },
+        {
+            "stage": "calculate source completeness",
+            "status": "completed",
+            "elapsedSeconds": completeness_elapsed,
+        },
+        {
+            "stage": "rebuild review rows after controls",
+            "status": "completed",
+            "elapsedSeconds": review_rebuild_elapsed,
+        },
+    ]
+    mapping_result["debug"]["final_pending_filters_to_apply"] = reviewed_pending_filters
+    mapping_result["debug"]["mapping_diagnostics"] = mapping_diagnostics
+    mapping_result["debug"]["mapping_unavailable_fields"] = unavailable_fields
+    mapping_result["debug"]["scoped_option_counts"] = {
+        key: len(available_filter_options.get(key, []))
+        for key in (
+            "agencies",
+            "bureaus",
+            "contracting_offices",
+            "funding_offices",
+            "naics",
+            "psc",
+            "contract_types",
+            "set_asides",
+            "pop_locations",
+        )
+    }
+    mapping_result["debug"]["warnings"] = []
+    subagency_row = rows_by_field.get("Subagency / Bureau")
+    if subagency_row and subagency_row.get("unmapped_extracted_display") and not subagency_row.get("filter_option"):
+        mapping_result["debug"]["warnings"].append(
+            "Extracted subagency is not available in scoped bureau options and requires user confirmation."
+        )
+    st.session_state.solicitation_mapping_result = mapping_result
+    st.session_state.solicitation_mapping_cache_key = mapping_cache_key
+
+    _render_solicitation_confirmation_summary(review_rows)
+    st.session_state.solicitation_review_status = "displayed"
+
+    action_col1, action_col2 = st.columns(2)
+    with action_col1:
+        apply_filters = st.button(
+            "Apply Selected Filters",
+            key="apply_solicitation_filters",
+            use_container_width=True,
+        )
+    with action_col2:
+        apply_filters_and_run = st.button(
+            "Apply Selected Filters & Run Analysis",
+            key="apply_solicitation_filters_and_run",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if apply_filters or apply_filters_and_run:
+        apply_solicitation_pending_filters(reviewed_pending_filters, available_filter_options)
+        _mark_solicitation_scope_applied(
+            reviewed_pending_filters,
+            mapping_result=mapping_result,
+            resolved_signals=resolved_signals,
+            scope_preview=scope_preview,
+        )
+        if apply_filters_and_run:
+            mark_analysis_started(
+                st.session_state.active_agency,
+                st.session_state.active_bureau,
+                st.session_state.active_fiscal_year,
+                st.session_state.active_contracting_office,
+                st.session_state.active_market_filters,
+            )
+        st.rerun()
+
+    with st.expander("Developer diagnostics", expanded=False):
+        details_tab, diagnostics_tab, tools_tab = st.tabs(
+            ["Extracted details", "Diagnostics", "Advanced tools"]
+        )
+        engine_diagnostics = st.session_state.get("solicitation_engine_diagnostics") or {}
+        if engine_diagnostics:
+            st.caption(
+                "Extraction engine: "
+                f"{engine_diagnostics.get('mode') or '-'} / {engine_diagnostics.get('profile') or '-'}"
+            )
+        with details_tab:
+            _render_solicitation_full_details_content(
+                resolved_signals,
+                scope_preview,
+                rows,
+                context_rows,
+                user_overrides,
+                available_filter_options,
+                extracted_org,
+                run_id=st.session_state.get("solicitation_loaded_run_id"),
+            )
+        with diagnostics_tab:
+            _render_extraction_diagnostics_content(resolved_signals)
+            preview_validation = build_analysis_validation_metadata(
+                agency=scoped_agency,
+                bureau=scoped_bureau,
+                fiscal_year=int(pending_year),
+                contracting_office=st.session_state.get("active_contracting_office"),
+                market_filters=st.session_state.get("active_market_filters"),
+                data_source_labels=[
+                    st.session_state.get("solicitation_signals_source", "uploaded_resolved_signals_json")
+                ],
+                analysis_context="solicitation_mapping_preview",
+            )
+            preview_validation["mapping_option_scope"] = available_filter_options.get("scope")
+            mapping_result["debug"]["as_of_validation"] = preview_validation
+            st.json(mapping_result["debug"])
+        with tools_tab:
+            if show_advanced_upload:
+                _render_resolved_signals_upload_content(show_test_mode_note=False)
+            else:
+                st.caption("Advanced upload tools are unavailable in this context.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    return True
+
+
 def render_landing_page(agency_records: list[dict]) -> None:
     hide_sidebar_for_landing()
 
@@ -5300,7 +10896,13 @@ def render_landing_page(agency_records: list[dict]) -> None:
             """,
             unsafe_allow_html=True,
         )
-        st.markdown('<div class="sidebar-section">Agency</div>', unsafe_allow_html=True)
+        st.markdown(
+            """
+            <div class="workflow-section-label">Start with a market</div>
+            <div class="workflow-section-helper">Select an agency, bureau, and fiscal year to explore prime contract obligations.</div>
+            """,
+            unsafe_allow_html=True,
+        )
         (
             active_agency,
             selected_bureau,
@@ -5322,12 +10924,16 @@ def render_landing_page(agency_records: list[dict]) -> None:
             )
             st.rerun()
 
-        st.divider()
-        st.caption(f"Active agency: {active_agency}")
-        if selected_bureau != ALL_BUREAUS:
-            st.caption(f"Active bureau: {selected_bureau}")
-        if selected_contracting_office != ALL_CONTRACTING_OFFICES:
-            st.caption(f"Contracting office: {format_contracting_office_option(selected_contracting_office)}")
+        render_workflow_or_divider()
+        render_solicitation_workflow_cta()
+        render_upload_solicitation_package_panel()
+        render_solicitation_scope_preview(
+            agency_records,
+            active_agency,
+            selected_bureau,
+            selected_year,
+            show_advanced_upload=True,
+        )
 
 
 def render_market_selectors(agency_records: list[dict]) -> tuple[str, str, int, str, str, dict]:
@@ -5440,9 +11046,21 @@ def render_refine_market_selectors(
     )
     contract_type_options = default_filter_options()["contract_types"]
     set_aside_options = default_filter_options()["set_asides"]
-    state_options = [ALL_POP_STATES] + [
+    pop_scope_filters = normalize_market_filters({**active_market_filters, "pop_state": ALL_POP_LOCATIONS})
+    country_options = fetch_pop_country_filter_options(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+        ALL_POP_LOCATIONS,
+        market_filters=pop_scope_filters,
+    )
+    us_state_options = [
         encode_option(code, name) for code, name in sorted(STATE_OPTIONS.items(), key=lambda item: item[1])
     ]
+    foreign_country_options = [
+        option for option in country_options if option != ALL_POP_LOCATIONS
+    ]
+    pop_location_options = [ALL_POP_LOCATIONS] + us_state_options + foreign_country_options
     contracting_options_key = office_options_scope_key(
         active_agency,
         selected_bureau,
@@ -5526,9 +11144,9 @@ def render_refine_market_selectors(
     active_set_aside = active_market_filters["set_aside_type"]
     if active_set_aside not in set_aside_options:
         active_set_aside = ALL_SET_ASIDE_TYPES
-    active_pop_state = active_market_filters["pop_state"]
-    if active_pop_state not in state_options:
-        active_pop_state = ALL_POP_STATES
+    active_pop_location = active_market_filters["pop_state"]
+    if active_pop_location not in pop_location_options:
+        active_pop_location = ALL_POP_LOCATIONS
     active_funding_office = active_market_filters["funding_office"]
     if active_funding_office not in funding_office_options:
         active_funding_office = ALL_FUNDING_OFFICES
@@ -5542,7 +11160,7 @@ def render_refine_market_selectors(
         or active_set_aside != ALL_SET_ASIDE_TYPES
         or selected_contracting_office != ALL_CONTRACTING_OFFICES
         or active_funding_office != ALL_FUNDING_OFFICES
-        or active_pop_state != ALL_POP_STATES
+        or active_pop_location not in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES)
     )
 
     with st.expander("Refine Market", expanded=advanced_filters_active):
@@ -5600,11 +11218,14 @@ def render_refine_market_selectors(
             ),
             help="Office or program that funded the award.",
         )
-        selected_pop_state = st.selectbox(
-            "Place of Performance State",
-            state_options,
-            index=state_options.index(active_pop_state),
-            format_func=lambda option: option if option == ALL_POP_STATES else format_code_description_option(option),
+        selected_pop_location = st.selectbox(
+            "Place of Performance",
+            pop_location_options,
+            index=pop_location_options.index(active_pop_location),
+            format_func=lambda option: option
+            if option in (ALL_POP_LOCATIONS, LEGACY_ALL_POP_STATES)
+            else format_code_description_option(option),
+            help="Filter by US state or foreign country where work is performed.",
         )
 
     selected_market_filters = normalize_market_filters(
@@ -5614,7 +11235,7 @@ def render_refine_market_selectors(
             "psc_code": selected_psc,
             "set_aside_type": selected_set_aside,
             "funding_office": selected_funding_office,
-            "pop_state": selected_pop_state,
+            "pop_state": selected_pop_location,
         }
     )
     st.session_state.active_contracting_office = selected_contracting_office
@@ -5733,6 +11354,13 @@ def render_analysis_dashboard(
         int(selected_year),
         selected_market_filters,
         selected_contracting_office,
+    )
+    dashboard_scope_key = time_grain_scope_key(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+        selected_contracting_office,
+        selected_market_filters,
     )
     render_market_scope_summary(
         active_agency,
@@ -5896,31 +11524,58 @@ def render_analysis_dashboard(
                 st.rerun()
 
     market_concentration, market_concentration_debug = market_concentration_summary(transaction_df, current_total)
+    award_drilldown_df, award_drilldown_debug = award_drilldown_dataframe(transaction_df)
+    award_drilldown_total = float(award_drilldown_debug.get("total_grouped_award_obligation_sum") or 0.0)
+    award_drilldown_reconciles = abs(award_drilldown_total - float(current_total or 0.0)) <= 0.01
+    award_drilldown_debug.update(
+        {
+            "main_kpi_obligation_sum": round(float(current_total or 0.0), 2),
+            "grouped_sum_reconciles_to_kpi": award_drilldown_reconciles,
+        }
+    )
+    if not award_drilldown_reconciles:
+        print("ERROR: award drilldown obligation total does not reconcile to KPI.")
+    negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
+    negative_obligation_total = float(negative_transaction_df["Obligation Amount"].sum())
+    market_summary_text, summary_debug = build_market_summary(
+        active_agency,
+        selected_bureau,
+        int(selected_year),
+        selected_contracting_office,
+        selected_market_filters,
+        current_total,
+        vendor_df,
+        award_totals,
+        bool(award_scope_error),
+        market_concentration,
+        market_concentration_debug,
+        transaction_df,
+        award_drilldown_df,
+        negative_transaction_df,
+        negative_obligation_total,
+    )
     metric_cols = st.columns(3)
     with metric_cols[0]:
         metric_card(
             f"{selected_year_label} Contract Obligations",
             total_spend_value,
-            "Prime contract award transactions",
+            "Prime contract obligations reported for the selected scope.",
             "#2dd4bf",
-            helper_text=(
-                "Shows contract obligations reported to USAspending for the selected fiscal year. "
-                "Includes prime contract award transactions only. Excludes IDVs, grants, loans, "
-                "direct payments, and other assistance awards."
-            ),
         )
     with metric_cols[1]:
         metric_card(
             yoy_metric_label,
             yoy_delta_value,
-            yoy_metric_subtitle,
+            "Compared with the same period in the prior fiscal year."
+            if yoy_metric_subtitle == "Compared with same period in prior fiscal year"
+            else yoy_metric_subtitle,
             "#f59e0b" if (yoy_delta or 0) >= 0 else "#fb7185",
         )
     with metric_cols[2]:
         metric_card(
             "Contractors Shown",
             contractor_count_value,
-            "Top recipient records shown",
+            "Top recipient records shown.",
             "#38bdf8",
         )
 
@@ -5929,28 +11584,33 @@ def render_analysis_dashboard(
         metric_card(
             "Active Award Ceiling",
             "Unavailable" if award_scope_error else format_money(award_totals["active_award_ceiling"]),
-            f"{format_count(award_totals['award_count'])} unique awards deduped",
+            f"{format_count(award_totals['award_count'])} unique awards",
             "#a78bfa",
-            helper_text=(
-                "Award Scope View: one record per unique award, then summed. "
-                "This uses potential_total_value_of_award as Award Ceiling, not obligated spend."
-            ),
+            helper_text="Total potential value of active awards in this scope.",
         )
     with award_metric_cols[1]:
         metric_card(
             "Current Award Value",
             "Unavailable" if award_scope_error else format_money(award_totals["current_award_value"]),
-            "Deduped current_total_value_of_award",
+            "Current total value of active awards in this scope.",
             "#60a5fa",
-            helper_text="Current Award Value is not obligated spend.",
+            helper_text="This is award value, not period obligations.",
         )
     with award_metric_cols[2]:
         metric_card(
             "Remaining Ceiling",
             "Unavailable" if award_scope_error else format_money(award_totals["remaining_ceiling"]),
-            "Award Ceiling minus Current Award Value",
+            "Award ceiling minus current award value.",
             "#f59e0b",
+            helper_text="Capacity indicator only; not future obligations.",
         )
+
+    render_market_summary_controls(
+        market_summary_text,
+        dashboard_scope_key,
+        active_agency,
+        int(selected_year),
+    )
 
     market_lane_naics_debug, market_lane_psc_debug = render_market_lane_mix(
         transaction_df,
@@ -5963,41 +11623,8 @@ def render_analysis_dashboard(
         market_lane_naics_debug["transaction_row_naics_field_names_found"] = lane_field_names_found.get("naics", [])
         market_lane_psc_debug["transaction_row_psc_field_names_found"] = lane_field_names_found.get("psc", [])
 
-    with st.expander("Award Scope Diagnostic Probe"):
-        st.caption("Runs the same award-scope function as the dashboard for NASA FY2026, bypassing cached rows.")
-        if st.button("Run NASA FY2026 Award Scope Probe", key="run-nasa-award-scope-probe"):
-            probe_start = time.monotonic()
-            probe_df, probe_payload, probe_error = fetch_award_scope_from_download(
-                DEFAULT_AGENCY_NAME,
-                ALL_BUREAUS,
-                current_fiscal_year(),
-                contracting_office=ALL_CONTRACTING_OFFICES,
-                market_filters=default_market_filters(),
-                bypass_cache=True,
-            )
-            probe_totals = award_scope_totals(probe_df)
-            probe_debug = probe_payload.get("award_scope_debug", {})
-            st.json(
-                {
-                    "failure_mode": probe_error,
-                    "raw_rows_returned": probe_debug.get("raw_transaction_rows_returned"),
-                    "unique_award_keys": probe_debug.get("unique_awards_deduped"),
-                    "non_null_potential_value_count": probe_debug.get(
-                        "count_non_null_potential_total_value_of_award"
-                    ),
-                    "non_null_current_value_count": probe_debug.get(
-                        "count_non_null_current_total_value_of_award"
-                    ),
-                    "active_award_ceiling_total": round(probe_totals["active_award_ceiling"], 2),
-                    "current_award_value_total": round(probe_totals["current_award_value"], 2),
-                    "remaining_ceiling_total": round(probe_totals["remaining_ceiling"], 2),
-                    "elapsed_seconds": round(time.monotonic() - probe_start, 2),
-                    "diagnostic": probe_debug,
-                }
-            )
-
     st.write("")
-    time_grain_key = f"obligation-time-grain-{time_grain_scope_key(active_agency, selected_bureau, int(selected_year), selected_contracting_office, selected_market_filters)}"
+    time_grain_key = f"obligation-time-grain-{dashboard_scope_key}"
     time_grain = st.radio(
         "Time Grain",
         TIME_GRAIN_OPTIONS,
@@ -6047,7 +11674,7 @@ def render_analysis_dashboard(
         LEADERBOARD_OPTIONS,
         index=0,
         horizontal=True,
-        key=f"leaderboard-mode-{time_grain_scope_key(active_agency, selected_bureau, int(selected_year), selected_contracting_office, selected_market_filters)}",
+        key=f"leaderboard-mode-{dashboard_scope_key}",
     )
     if leaderboard_mode == LEADERBOARD_CURRENT_VALUE:
         leaderboard_df = award_scope_vendor_dataframe(award_scope_df, "current_award_value")
@@ -6071,7 +11698,7 @@ def render_analysis_dashboard(
         )
         if time_grain == TIME_GRAIN_FISCAL_YEAR and not trend_df.empty and int(current_fiscal_year()) in set(trend_df["fiscal_year"].astype(int)):
             st.caption(
-                "Current fiscal year is year-to-date and is not directly comparable to completed fiscal years."
+                f"{fiscal_year_label(current_fiscal_year())} is year-to-date. Obligations are reported contract activity, not profit or loss, and are not directly comparable to completed fiscal years."
             )
     with chart_cols[1]:
         if leaderboard_df.empty:
@@ -6087,27 +11714,10 @@ def render_analysis_dashboard(
                 config={"responsive": True, "displayModeBar": False},
             )
 
-    award_drilldown_df, award_drilldown_debug = award_drilldown_dataframe(transaction_df)
-    award_drilldown_total = float(award_drilldown_debug.get("total_grouped_award_obligation_sum") or 0.0)
-    award_drilldown_reconciles = abs(award_drilldown_total - float(current_total or 0.0)) <= 0.01
-    award_drilldown_debug.update(
-        {
-            "main_kpi_obligation_sum": round(float(current_total or 0.0), 2),
-            "grouped_sum_reconciles_to_kpi": award_drilldown_reconciles,
-        }
-    )
-    if not award_drilldown_reconciles:
-        print("ERROR: award drilldown obligation total does not reconcile to KPI.")
     award_drilldown_debug.update(
         render_top_awards_drilldown(
             award_drilldown_df,
-            time_grain_scope_key(
-                active_agency,
-                selected_bureau,
-                int(selected_year),
-                selected_contracting_office,
-                selected_market_filters,
-            ),
+            dashboard_scope_key,
         )
     )
 
@@ -6139,8 +11749,6 @@ def render_analysis_dashboard(
             "options": derived_office_options.get("funding_offices", [ALL_FUNDING_OFFICES]),
             "stats": derived_office_options.get("funding_office_stats", {}),
         }
-    negative_transaction_df = transaction_df[transaction_df["Obligation Amount"] < 0].copy()
-    negative_obligation_total = float(negative_transaction_df["Obligation Amount"].sum())
     audit_df = audit_log_dataframe(transaction_df)
 
     risk_metric_col, _risk_space = st.columns([1, 2])
@@ -6254,7 +11862,24 @@ def render_analysis_dashboard(
     if fallback_violations:
         st.warning("ERROR: explicit subagency selected but component used top-tier fallback")
     award_scope_debug = award_scope_payload.get("award_scope_debug", {})
+    validation_metadata = build_analysis_validation_metadata(
+        agency=active_agency,
+        bureau=selected_bureau,
+        fiscal_year=int(selected_year),
+        contracting_office=selected_contracting_office,
+        market_filters=selected_market_filters,
+        active_scope_payload=active_scope_payload,
+        usaspending_payload_summary=build_usaspending_filter_summary(trend_payload),
+        transaction_row_count=int(processed_transaction_count or len(transaction_df)),
+        unique_award_count=int(processed_unique_award_count or 0) if processed_unique_award_count is not None else None,
+        total_obligations=float(current_total),
+        data_source_labels=[trend_source, transaction_source, vendor_source],
+        analysis_context="dashboard_analysis",
+    )
+    st.session_state.analysis_run_completed_at = validation_metadata["as_of"]
+    st.session_state.last_analysis_validation_metadata = validation_metadata
     dashboard_debug_payload = {
+        "as_of_validation": validation_metadata,
         "main_kpi_obligation_total": round(float(current_total), 2),
         "award_scope_raw_transaction_row_count": int(
             award_scope_debug.get("raw_transaction_rows")
@@ -6277,6 +11902,7 @@ def render_analysis_dashboard(
             "naics": market_lane_naics_debug,
             "psc": market_lane_psc_debug,
         },
+        "summary_debug": summary_debug,
         "award_drilldown": award_drilldown_debug,
         "leaderboard_reconciliation": {
             "active_filter_payload": active_scope_payload,
@@ -6297,11 +11923,25 @@ def render_analysis_dashboard(
         },
     }
 
-    with st.expander("API Payloads"):
+    st.markdown(
+        '<div class="audit-heading">&#9888;&#65039; Negative Obligation / De-obligation Signal Log</div>',
+        unsafe_allow_html=True,
+    )
+    if audit_df.empty:
+        st.success(
+            "No negative obligation or de-obligation signal rows found for this cycle."
+        )
+    else:
+        render_dark_html_table(audit_df, columns=list(audit_df.columns))
+
+    st.markdown('<div class="debug-section-note">Diagnostics and source payloads</div>', unsafe_allow_html=True)
+    with st.expander("API Payloads / Debug", expanded=False):
         if st.button("Clear All Cached Data", key="clear-all-cached-data"):
             clear_all_cached_dashboard_data()
             st.rerun()
         st.caption(f"App cache version: {APP_CACHE_VERSION}")
+        st.markdown("As-Of / Validation Metadata")
+        st.json(json_safe_payload(validation_metadata))
         st.markdown("Active Filter Scope")
         st.json(json_safe_payload(active_scope_payload))
         st.markdown("Dashboard Reconciliation Debug")
@@ -6316,22 +11956,10 @@ def render_analysis_dashboard(
         st.json(json_safe_payload(award_scope_payload))
         st.markdown("Transaction Negative Obligations")
         st.json(json_safe_payload(transaction_payload))
+        st.divider()
+        render_award_scope_diagnostic_probe()
         if trend_error or vendor_error or transaction_error or award_scope_error:
             st.caption("Live API issues are surfaced above; no synthetic data is used.")
-
-    st.markdown(
-        '<div class="audit-heading">&#9888;&#65039; Negative Obligation / Termination Signal Log</div>',
-        unsafe_allow_html=True,
-    )
-    if audit_df.empty:
-        st.success(
-            "No negative obligation or termination signal rows found for this cycle."
-        )
-    else:
-        styled_audit_df = audit_df.style.set_properties(
-            **{"color": "#1A1A1A", "background-color": "#FFFFFF"}
-        )
-        st.dataframe(styled_audit_df, use_container_width=True, hide_index=True)
 
     return {
         "transaction_count": processed_transaction_count,
@@ -6343,7 +11971,8 @@ def render_analysis_dashboard(
 def main() -> None:
     inject_styles()
 
-    # Initialize baseline selector states
+    # Pending sidebar selector state (active_*). These mirror the Control Panel and
+    # can diverge from analyzed_* until the user runs or updates analysis.
     if "active_agency" not in st.session_state:
         st.session_state.active_agency = DEFAULT_AGENCY_NAME
     if "active_toptier_code" not in st.session_state:
@@ -6363,7 +11992,7 @@ def main() -> None:
     if "pending_office_option_stats" not in st.session_state:
         st.session_state.pending_office_option_stats = {}
 
-    # Persistent state tracking to prevent the dashboard from vanishing on chart interaction
+    # Last analyzed dashboard state (analyzed_*). Rendered KPIs/charts use these values.
     if "analyzed_agency" not in st.session_state:
         st.session_state.analyzed_agency = None
     if "analyzed_bureau" not in st.session_state:
@@ -6378,6 +12007,22 @@ def main() -> None:
         st.session_state.analyzed_office_option_stats = {}
     if "dashboard_started" not in st.session_state:
         st.session_state.dashboard_started = False
+    if "solicitation_user_filter_overrides" not in st.session_state:
+        st.session_state.solicitation_user_filter_overrides = {}
+    if "solicitation_removed_filter_fields" not in st.session_state:
+        st.session_state.solicitation_removed_filter_fields = []
+    if "solicitation_scope_applied" not in st.session_state:
+        st.session_state.solicitation_scope_applied = False
+    if "solicitation_scope_review_open" not in st.session_state:
+        st.session_state.solicitation_scope_review_open = False
+    if "solicitation_comparable_market" not in st.session_state:
+        st.session_state.solicitation_comparable_market = False
+    if "solicitation_extraction_status" not in st.session_state:
+        st.session_state.solicitation_extraction_status = "idle"
+    if "solicitation_mapping_status" not in st.session_state:
+        st.session_state.solicitation_mapping_status = "not_started"
+    if "solicitation_review_status" not in st.session_state:
+        st.session_state.solicitation_review_status = "not_ready"
 
     agency_records = fetch_toptier_agencies()
     if not agency_records:
@@ -6442,6 +12087,11 @@ def main() -> None:
             st.caption(f"Active bureau: {selected_bureau}")
         if selected_contracting_office != ALL_CONTRACTING_OFFICES:
             st.caption(f"Contracting office: {format_contracting_office_option(selected_contracting_office)}")
+        st.divider()
+        render_upload_solicitation_package_panel()
+        render_solicitation_sidebar_scope()
+        if not _should_show_solicitation_scope_review():
+            render_load_solicitation_signals_panel(show_test_mode_note=False)
 
     # Lock in parameters when the button is clicked
     if analysis_triggered:
@@ -6463,6 +12113,16 @@ def main() -> None:
         displayed_contracting_office = st.session_state.analyzed_contracting_office
         displayed_market_filters = normalize_market_filters(st.session_state.analyzed_market_filters)
         render_dashboard_header(displayed_agency, displayed_bureau)
+        if _should_show_solicitation_scope_review():
+            render_solicitation_scope_preview(
+                agency_records,
+                active_agency,
+                selected_bureau,
+                selected_year,
+                show_advanced_upload=False,
+            )
+        else:
+            render_solicitation_baseline_notice()
         loading_slot = st.empty() if loading_requested else None
         if loading_slot is not None:
             render_analysis_loading_card(loading_slot, displayed_year)
@@ -6492,6 +12152,16 @@ def main() -> None:
                 show_analysis_success(analysis_summary.get("transaction_count"))
     else:
         render_dashboard_header(active_agency, selected_bureau)
+        if _should_show_solicitation_scope_review():
+            render_solicitation_scope_preview(
+                agency_records,
+                active_agency,
+                selected_bureau,
+                selected_year,
+                show_advanced_upload=False,
+            )
+        else:
+            render_solicitation_baseline_notice()
         if st.session_state.pop("cache_cleared_notice", False):
             st.success("All cached data cleared. Run analysis again to fetch fresh USAspending data.")
         st.info("👈 Select your parameters in the Control Panel and click 'Run Data Analysis' to begin.")

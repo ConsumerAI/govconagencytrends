@@ -4,3 +4,6 @@ requests==2.32.3
 pandas==2.2.2
 openai==1.35.14
 pypdf==4.2.0
+openpyxl==3.1.5
+mammoth==1.8.0
+python-dotenv==1.0.1

@@ -1,0 +1,2126 @@
+{
+  "version": "resolved_signals.v1",
+  "runId": "run_85024b98-a52b-4ef0-8aad-858089b4734e",
+  "signals": [
+    {
+      "id": "process_sources_v1",
+      "canonical_value": "{\n  \"version\": 1,\n  \"runId\": \"run_85024b98-a52b-4ef0-8aad-858089b4734e\",\n  \"sources\": [\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/0177462da0a1c0fd9235647cbab33daf03ac5d709fa3f6232659d71ea75fde0f.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 228144,\n      \"sha256\": \"0177462da0a1c0fd9235647cbab33daf03ac5d709fa3f6232659d71ea75fde0f\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\0177462da0a1c0fd9235647cbab33daf03ac5d709fa3f6232659d71ea75fde0f.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/05441b319f4e0a62bb0c52d1bbbc44b2f14728297703130fa16982f44f04f589.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 564140,\n      \"sha256\": \"05441b319f4e0a62bb0c52d1bbbc44b2f14728297703130fa16982f44f04f589\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\05441b319f4e0a62bb0c52d1bbbc44b2f14728297703130fa16982f44f04f589.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/4f25a7b3ec56735cc9a5e9ff1517af2f1f8fe07fd1d2736a20b553b0e44ffc6b.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 2341160,\n      \"sha256\": \"4f25a7b3ec56735cc9a5e9ff1517af2f1f8fe07fd1d2736a20b553b0e44ffc6b\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\4f25a7b3ec56735cc9a5e9ff1517af2f1f8fe07fd1d2736a20b553b0e44ffc6b.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/5eef9b2e7863fbb3a00bb82c54728b5431db620a4e0f5353d19d771c69ad2a78.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 234582,\n      \"sha256\": \"5eef9b2e7863fbb3a00bb82c54728b5431db620a4e0f5353d19d771c69ad2a78\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\5eef9b2e7863fbb3a00bb82c54728b5431db620a4e0f5353d19d771c69ad2a78.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/afd2cfa6d3cc0ca4658fbd3c511742bd7a2e58ce8afe9901b35a1474fd40bfe7.xlsx\",\n      \"ext\": \"xlsx\",\n      \"bytes\": 39212,\n      \"sha256\": \"afd2cfa6d3cc0ca4658fbd3c511742bd7a2e58ce8afe9901b35a1474fd40bfe7\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\afd2cfa6d3cc0ca4658fbd3c511742bd7a2e58ce8afe9901b35a1474fd40bfe7.xlsx\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/b3dc8ce2249a56e152247a4b7002c10d000ba54d71a7a650b65ec1086bed226c.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 526462,\n      \"sha256\": \"b3dc8ce2249a56e152247a4b7002c10d000ba54d71a7a650b65ec1086bed226c\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\b3dc8ce2249a56e152247a4b7002c10d000ba54d71a7a650b65ec1086bed226c.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/b5cc131a648230d4a289532dd48f93804197510d0dd4fdc8362617806f0160d2.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 233086,\n      \"sha256\": \"b5cc131a648230d4a289532dd48f93804197510d0dd4fdc8362617806f0160d2\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\b5cc131a648230d4a289532dd48f93804197510d0dd4fdc8362617806f0160d2.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/dc7de68fc6aa7e40db1a48a6bcd4f3bf54132a3b519c07f6621fcfe4bc9b7eb2.pdf\",\n      \"ext\": \"pdf\",\n      \"bytes\": 232917,\n      \"sha256\": \"dc7de68fc6aa7e40db1a48a6bcd4f3bf54132a3b519c07f6621fcfe4bc9b7eb2\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\dc7de68fc6aa7e40db1a48a6bcd4f3bf54132a3b519c07f6621fcfe4bc9b7eb2.pdf\"\n    },\n    {\n      \"key\": \"runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/sources/run.json\",\n      \"ext\": \"json\",\n      \"bytes\": 85,\n      \"sha256\": \"ba8e8cc4683ccdf52301e71483c043a0e86d9e49c7dcad50ac4328ee49bd24c4\",\n      \"absPath\": \"C:\\\\Users\\\\cac25\\\\govconpricetowin\\\\data\\\\run_85024b98-a52b-4ef0-8aad-858089b4734e\\\\run.json\"\n    }\n  ]\n}",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [],
+        "evidence_v1_sources": [],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [],
+        "evidence_v1": null
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_clearances_v1",
+      "canonical_value": "Personnel must meet base-access/background investigation requirements: Local Files Check for personnel working on Tyndall AFB property; NACI for personnel working in a government facility 6 months or longer or requiring LAN access; favorably completed NACI for unescorted entry to restricted areas.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Att 1 Rev - Performance Work Statement 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Att 1 Rev - Performance Work Statement 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:22",
+            "snippet": "Personnel working in a government facility for less than 6 months or working anywhere on Tyndall AFB property are required to have a Local Files Check."
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:22",
+            "snippet": "Personnel working in a government facility 6 months or longer or at any time requiring access to the Local Area Network will require a National Agency Check with Written Inquiry (NACI)."
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:22",
+            "snippet": "Personnel requiring Unescorted Entry to Restricted Areas, require a favorably completed NACI clearance"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+          "excerpt": "Personnel working in a government facility for less than 6 months or working anywhere on Tyndall AFB property are required to have a Local Files Check. | Personnel working in a government facility 6 months or longer or at any time requiring access to the Local Area Network will r",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_competition_type_v1",
+      "canonical_value": "Competitive",
+      "canonical_confidence": "high",
+      "resolution_status": "resolved_with_promotion",
+      "resolution_basis": "promoted_from_authoritative_evidence",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "Final Questions List Rev - 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15"
+          },
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlined in the solicitation."
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "excerpt": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15 | 1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlin",
+          "spanHashes": []
+        }
+      },
+      "alternates": [
+        {
+          "value": null,
+          "confidence": "high",
+          "evidence": {
+            "legacy": [
+              {
+                "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+                "artifact": "text",
+                "locator": "page:1",
+                "snippet": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15"
+              },
+              {
+                "sourceId": "Final Questions List Rev - 8 Apr 2026",
+                "artifact": "text",
+                "locator": "page:1",
+                "snippet": "1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlined in the solicitation."
+              }
+            ],
+            "evidence_v1": {
+              "source": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+              "excerpt": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15 | 1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlin",
+              "spanHashes": []
+            }
+          },
+          "source_summary": {
+            "candidate_count": 1,
+            "confidence_values": [
+              "high"
+            ],
+            "legacy_source_ids": [
+              "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+              "Final Questions List Rev - 8 Apr 2026"
+            ],
+            "evidence_v1_sources": [
+              "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+            ],
+            "authority_tiers": [],
+            "finding_codes": []
+          },
+          "suppression_reason": "superseded_by_promotion"
+        }
+      ],
+      "notes": "Final phase53 signal preserved without additional winner-picking. Promoted from authoritative excerpt via competition_set_aside_from_eval_phrase_v1.",
+      "promotion": {
+        "promotion_rule_id": "competition_set_aside_from_eval_phrase_v1",
+        "promotion_source_field": "rfp_competition_type_v1",
+        "promotion_source_artifact": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+        "promotion_locator": "excerpt",
+        "promotion_excerpt": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15",
+        "prior_resolution_status": "passthrough",
+        "prior_resolution_basis": "single_final_signal"
+      },
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_contract_specialist_name_v1",
+      "canonical_value": "Cleville Yarbrough",
+      "canonical_confidence": "medium",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "medium"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "7. FOR SOLICITATION INFORMATION CALL:\na. NAME ... CLEVILLE YARBROUGH"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "The Government points of contacts for this acquisition are Mr. Cleville Yarbrough , Contracting Specialist, SSgt Jonathan Truslow, Contracting Specialist and Mr. James S. Vaughan , Contracting Officer"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "7. FOR SOLICITATION INFORMATION CALL:\na. NAME ... CLEVILLE YARBROUGH | The Government points of contacts for this acquisition are Mr. Cleville Yarbrough , Contracting Specialist, SSgt Jonathan Truslow, Contracting Specialist and Mr. James S. Vaughan , Contracting Officer.",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_contract_type_v1",
+      "canonical_value": "Firm Fixed Price (FFP)",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "0001 Mess Attendant Services at Berg-Liles Dining Facility in accordance with the Performance Work Statement (PWS).\nProduct Service Code: S203\nPricing Arrangement: Firm Fixed Price"
+          },
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "0006 Mission Essential Services for Mess Attendant Support Services in accordance with the Performance Work Statement (PWS).\n... Product Service Code: S203\nPricing Arrangement: Firm Fixed Price"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "0001 Mess Attendant Services at Berg-Liles Dining Facility in accordance with the Performance Work Statement (PWS).\nProduct Service Code: S203\nPricing Arrangement: Firm Fixed Price | 0006 Mission Essential Services for Mess Attendant Support Services in accordance with the Perfor",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_description_v1",
+      "canonical_value": "Mess attendant support services for the Berg-Liles Dining Facility at Tyndall AFB, including food service support, cleaning/sanitation, equipment maintenance/repair, food prep support, cashier services, and contingency cook support when required.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:10",
+            "snippet": "This is a contract for mess attendant support services for the Berg-Liles Dining Facility"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:10",
+            "snippet": "Contractor tasks include, but not limited to, the following: serving and replenishing food; cleaning interior and exterior of facilities, equipment, and utensils; maintain equipment and repair as requ"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "This is a contract for mess attendant support services for the Berg-Liles Dining Facility | Contractor tasks include, but not limited to, the following: serving and replenishing food; cleaning interior and exterior of facilities, equipment, and utensils; maintain equipment and re",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_eval_method_v1",
+      "canonical_value": "Tradeoff / Best Value. Award is to the responsible offeror whose proposal is most advantageous to the Government, price and other factors considered; Technical and Past Performance, when combined, are equal in importance to Price.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:47",
+            "snippet": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15 ... to make a best value award determination."
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:47",
+            "snippet": "Evaluation factors Technical and Past Performance, when combined are of equal importance to price."
+          },
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:47",
+            "snippet": "The Government will award a contract resulting from this solicitation to the responsible offeror whose offer conforming to the solicitation will be most advantageous to the Government, price and other"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "excerpt": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15 ... to make a best value award determination. | Evaluation factors Technical and Past Performance, when combined are of equal importance to p",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_eval_weights_v1",
+      "canonical_value": "Technical and Past Performance, when combined, are equal in importance to Price.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:47",
+            "snippet": "Technical and past performance, when combined, are of equal importance to price."
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:47",
+            "snippet": "Evaluation factors Technical and Past Performance, when combined are of equal importance to price."
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "Technical and past performance, when combined, are of equal importance to price. | Evaluation factors Technical and Past Performance, when combined are of equal importance to price.",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_fee_constraints_v1",
+      "canonical_value": "Labor covered by the CBA may not be escalated beyond the basic period of performance (1 October 2026 to 30 September 2027); escalation beyond the basic contract period invalidates the offeror's right to seek an equitable adjustment.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The wage and benefit rates specified in the CBA are not escalated beyond the basic period of performance (1 October 2026 to 30 September 2027) (FAR 52.222 - 43(a) and (b)) and likewise, the prices pro"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "The wage and benefit rates specified in the CBA are not escalated beyond the basic period of performance (1 October 2026 to 30 September 2027) (FAR 52.222 - 43(a) and (b)) and likewise, the prices proposed for labor covered by the CBA shall not be escalated beyond the basic contr",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_incumbent_data_v1",
+      "canonical_value": "Trogon Group Services, LLC; prior contract no. FA481924C0006",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Final Questions List Rev - 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Final Questions List Rev - 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "Who is the current incumbent food services contractor for this requirement? Trogon Group Services, LLC"
+          },
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "a. Please provide the current contract number associated with the incumbent contract. ... a. FA481924C0006"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Final Questions List Rev - 8 Apr 2026",
+          "excerpt": "Who is the current incumbent food services contractor for this requirement? Trogon Group Services, LLC | a. Please provide the current contract number associated with the incumbent contract. ... a. FA481924C0006",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_issuing_agency_v1",
+      "canonical_value": "Department of the Air Force",
+      "canonical_confidence": "medium",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "medium"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "Solicitation/Contract Form Tyndall Air Force Base, Florida Mess Attendant Recompete"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "This is a contract for mess attendant support services for the Berg-Liles Dining Facility which will remain under the full operational and management control of the 325th Fighter Wing Force Support Sq"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "Solicitation/Contract Form Tyndall Air Force Base, Florida Mess Attendant Recompete | This is a contract for mess attendant support services for the Berg-Liles Dining Facility which will remain under the full operational and management control of the 325th Fighter Wing Force Supp",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_issuing_office_v1",
+      "canonical_value": "325 CONS PKP",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "9. ISSUED BY ... FA4819 325 CONS PKP\nBLDG 36235 CP 850-283-8643, 105 MISSISSIPPI RD\nTYNDALL AFB, FL 32403-5521"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "Proposals must be received by 325 CONS/PKB via the Solicitation Module"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "9. ISSUED BY ... FA4819 325 CONS PKP\nBLDG 36235 CP 850-283-8643, 105 MISSISSIPPI RD\nTYNDALL AFB, FL 32403-5521 | Proposals must be received by 325 CONS/PKB via the Solicitation Module",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_key_personnel_v1",
+      "canonical_value": "On-site full-time contract manager during normal duty hours (0730-1630), with an alternate or alternates designated in writing. The contract manager or alternate shall have full authority to act for the contractor on all contract matters, shall be available at all times to meet at Tyndall AFB with government personnel, and the contract manager and alternate(s) must be able to read, write, speak, and understand English. These positions shall at no time be vacant.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Att 1 Rev - Performance Work Statement 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Att 1 Rev - Performance Work Statement 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:21",
+            "snippet": "The contractor shall provide a full-time contract manager on site, during normal duty hours (0730-1630 hours)"
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:21",
+            "snippet": "The name of this person, and an alternate or alternates, who shall act for the contractor when the manager is absent, shall be designated in writing to the contracting officer and a copy provided to t"
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:21",
+            "snippet": "The contract manager or alternate shall have full authority to act for the contractor on all contract matters relating to services provided under this contract."
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:21",
+            "snippet": "The contract manager and alternate or alternates must be able to read, write, speak, and understand English. These positions shall at no time be vacant."
+          }
+        ],
+        "evidence_v1": {
+          "source": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+          "excerpt": "The contractor shall provide a full-time contract manager on site, during normal duty hours (0730-1630 hours) | The name of this person, and an alternate or alternates, who shall act for the contractor when the manager is absent, shall be designated in writing to the contracting ",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_ko_name_v1",
+      "canonical_value": "James S. Vaughan",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "FA481926R00010004"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "Mr. James S. Vaughan , Contracting Officer."
+          },
+          {
+            "sourceId": "FA481926R00010004",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "16A. NAME AND TITLE OF CONTRACTING OFFICER (Type or print)\nJAMES S. VAUGHAN"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "Mr. James S. Vaughan , Contracting Officer. | 16A. NAME AND TITLE OF CONTRACTING OFFICER (Type or print)\nJAMES S. VAUGHAN",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_labor_mapping_v1",
+      "canonical_value": "Offerors propose their staffing/labor categories, but they must meet the minimum staffing requirements shown in Technical Exhibit 2.",
+      "canonical_confidence": "medium",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "medium"
+        ],
+        "legacy_source_ids": [
+          "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "Final Questions List Rev - 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The offeror shall provide a staffing plan to include labor category and staffing equivalents, along with the associated number of hours for each functional area which meets all Performance Work Statem"
+          },
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The government does not determine contractor staffing; however, all cooking will be completed by military personnel and the Berg-Liles dining facility will remain in the full operational and control o"
+          },
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Please see exhibit 2 of the PWS for workload estimates and minimum staffing requirements."
+          },
+          {
+            "sourceId": "Att 1 Rev - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Estimates include the minimum manning requirements (not including the Contract Supervisor):"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "The offeror shall provide a staffing plan to include labor category and staffing equivalents, along with the associated number of hours for each functional area which meets all Performance Work Statement requirements for each contract period . | The government does not determine ",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_odc_plugs_v1",
+      "canonical_value": "Materials: $75,000 per Base Period; Materials: $75,000 per Option Period One; Materials: $75,000 per Option Period Two; Materials: $75,000 per Option Period Three; Materials: $75,000 per Option Period Four; Total travel: $0; Total materials: $375,000; Total ODC evaluated: $375,000",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 3 - Pricing Matrix",
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 3 - Pricing Matrix"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 0003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 1003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 2003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 3003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN4003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLINs 0002, 0003, 0006, 1002, 1003, 1006, 2002, 2003, 2006, 3002, 3003, 3006, 4002, 4003 and 4006 for Minor/Major Maintenance & Repairs, Mission Essential Services, and Other Than Direct Costs for mat"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 3 - Pricing Matrix",
+          "excerpt": "CLIN 0003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000 | CLIN 1003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000 | CLIN 2003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000 | CLIN 3003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_office_aac_v1",
+      "canonical_value": "FA4819",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "5. SOLICITATION NUMBER ... FA481926R0001"
+          },
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "9. ISSUED BY ... FA4819 325 CONS PKP"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "5. SOLICITATION NUMBER ... FA481926R0001 | 9. ISSUED BY ... FA4819 325 CONS PKP",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_past_perf_reqs_v1",
+      "canonical_value": "Offerors shall submit no more than three (3) PPI Worksheets for the most recent and relevant contracts. Recent means contracts performed and/or being performed within the last three (3) years prior to the issuance date of the solicitation. Relevancy is based on similar service scope, magnitude (dollar value) of effort, and complexities required by the solicitation, using the ratings Very Relevant, Relevant, Somewhat Relevant, and Not Relevant.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The offeror shall submit no more than three (3) PPI Worksheets for the most recent and relevant contracts performed that the Offeror considers relevant in demonstrating its ability to perform the prop"
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Recent past performance information includes contracts performed and/or being performed for any customer within the last three (3) years prior to the issuance date of the solicitation."
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Relevancy involves performance aspects similar service scope, magnitude (dollar value) of effort, and complexities to that are required by this solicitation."
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Very Relevant ... Relevant ... Somewhat Relevant ... Not Relevant"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "The offeror shall submit no more than three (3) PPI Worksheets for the most recent and relevant contracts performed that the Offeror considers relevant in demonstrating its ability to perform the proposed effort utilizing Attachment 5 . | Recent past performance information inclu",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_period_of_performance_v1",
+      "canonical_value": "Period of Performance: 01 Oct 2026 to 30 Sep 2031 (5 years)",
+      "canonical_confidence": "high",
+      "resolution_status": "canonical_derived",
+      "resolution_basis": "single_final_derived_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": [
+          "DERIVED_PERIOD_OF_PERFORMANCE_V1"
+        ]
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:19",
+            "snippet": "0001 12 Months Period of Performance From 01 Oct 2026 To 30 Sep 2027"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:19",
+            "snippet": "The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months)"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "0001 12 Months Period of Performance From 01 Oct 2026 To 30 Sep 2027 | The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months)",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking. Chosen value includes a derived-signal marker from the final signal set."
+    },
+    {
+      "id": "rfp_place_of_performance_v1",
+      "canonical_value": "Berg-Liles Dining Facility (Main Dining Facility), Bldg 1690, Tyndall AFB, FL; Oasis Ballroom, Tyndall AFB, FL (minimal food operations during facility evacuation).",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:32",
+            "snippet": "TECHNICAL EXHIBIT 4 SERVICE LOCATIONS\nThe contract work will be performed in the following locations:\nBLDG NO. USE/DESCRIPTION APPROXIMATE SQ FT\n1690 Berg-Liles 16000"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:32",
+            "snippet": "In the event of a facility evacuation, minimal food operations will be conducted out of the Oasis Ballroom. Contractor will provide a cashier for this event as well as a minimum of 2 personnel to assi"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "excerpt": "TECHNICAL EXHIBIT 4 SERVICE LOCATIONS\nThe contract work will be performed in the following locations:\nBLDG NO. USE/DESCRIPTION APPROXIMATE SQ FT\n1690 Berg-Liles 16000 | In the event of a facility evacuation, minimal food operations will be conducted out of the Oasis Ballroom. Con",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_pop_end_v1",
+      "canonical_value": "30 Sep 2031",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:23",
+            "snippet": "Option Line Item 4007 1 Lot Period of Performance From 01 Oct 2030 To 30 Sep 2031"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:23",
+            "snippet": "If all options are executed, the contract will span 01 October 2026 – 30 September 2031."
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "Option Line Item 4007 1 Lot Period of Performance From 01 Oct 2030 To 30 Sep 2031 | If all options are executed, the contract will span 01 October 2026 – 30 September 2031.",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_pop_start_v1",
+      "canonical_value": "01 Oct 2026",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:19",
+            "snippet": "0001 12 Months Period of Performance From 01 Oct 2026 To 30 Sep 2027"
+          },
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:19",
+            "snippet": "The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months)"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "0001 12 Months Period of Performance From 01 Oct 2026 To 30 Sep 2027 | The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months)",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_pop_years_v1",
+      "canonical_value": "5 years",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:4",
+            "snippet": "The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months) along with four option periods of 12 months. If all options are executed, the contract will span 01 October 2026 "
+          },
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:4",
+            "snippet": "The total duration of this contract, including the exercise of any options under this clause, shall not exceed . 60 Months"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "excerpt": "The base period of performance will be 1 October 2026 to 30 September 2027 (12 Months) along with four option periods of 12 months. If all options are executed, the contract will span 01 October 2026 – 30 September 2031. | The total duration of this contract, including the exerci",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_pricing_constraints_v1",
+      "canonical_value": "Complete SF 1449 sections 12, 17a, and 30a, b, and c; fill unit prices and totals for CLINs 0001-4007 rounded to 2 decimals only; complete and submit Attachment 3 Pricing Matrix by entering unit prices in the green highlighted fields for each contract period tab; ensure SF 1449 and Pricing Matrix entries correlate to Technical Volume II. The pricing matrix also reflects NTE and NSP treatment for specified CLINs.",
+      "canonical_confidence": "medium",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "medium"
+        ],
+        "legacy_source_ids": [
+          "Attachment 3 - Pricing Matrix",
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Offeror shall complete sections 12, 17a, and 30a, b, and c of the SF 1449 Solicitation, Offer, and Award and fill in the unit prices and totals for CLINs 0001 - 40 0 7 , rounded up to 2 decimals only."
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The offeror shall complete and submit the Price Matrix (Attachment 3) by entering unit prices in the green highlighted fields for each respective contract period tab contained within the matrix."
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Both the SF 1449 entries and the entries in the Pricing Matrix shall correlate to Technical Volume II ."
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 0002,Minor/Major Maintenance and Repair*,Minor/Major Maintenance and Repair*,1,NTE,Lot,50000,50000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 0003,Other Direct Costs,Other Direct Costs,1,NTE,Lot,75000,75000"
+          },
+          {
+            "sourceId": "Attachment 3 - Pricing Matrix",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "CLIN 0007,Contract Data Requirements ,Contract Data Requirements ,1,NSP,Lot,75000,0"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "Offeror shall complete sections 12, 17a, and 30a, b, and c of the SF 1449 Solicitation, Offer, and Award and fill in the unit prices and totals for CLINs 0001 - 40 0 7 , rounded up to 2 decimals only. | The offeror shall complete and submit the Price Matrix (Attachment 3) by ente",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_primary_naics_v1",
+      "canonical_value": "722310",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "NORTH AMERICAN INDUSTRY CLASSIFICATION STANDARD (NAICS): ... 722310"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "NORTH AMERICAN INDUSTRY CLASSIFICATION STANDARD (NAICS): ... 722310",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_primary_poc_v1",
+      "canonical_value": "Email: jonathan.truslow@us.af.mil; Phone: 8505238613",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json"
+        ],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [
+          4
+        ],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json",
+            "artifact": "text",
+            "locator": "spanHashes:f7631bc21982b07063a7c9676aa23e0415d66233cb4060d683f2fa5e0d6576e1",
+            "snippet": "n their entirety; (b) PWS Section 3.3.3.1(4) has been struck from the requirement as no longer the responsibility of the Government; language incorporated into the PWS in Amendment 0002 is highlighte…"
+          }
+        ],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "n their entirety; (b) PWS Section 3.3.3.1(4) has been struck from the requirement as no longer the responsibility of the Government; language incorporated into the PWS in Amendment 0002 is highlighted for the convenience of offerors; (c) The PWS is hereby revised as of 8 April 2…",
+          "spanHashes": [
+            "f7631bc21982b07063a7c9676aa23e0415d66233cb4060d683f2fa5e0d6576e1"
+          ]
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_primary_psc_v1",
+      "canonical_value": "S203",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "Product Service Code: S203"
+          },
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "0001 Mess Attendant Services at Berg-Liles Dining Facility in accordance with the Performance Work Statement (PWS).\nProduct Service Code: S203"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "Product Service Code: S203 | 0001 Mess Attendant Services at Berg-Liles Dining Facility in accordance with the Performance Work Statement (PWS).\nProduct Service Code: S203",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_prior_contract_piid_v1",
+      "canonical_value": "FA481924C0006",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [],
+        "evidence_v1_sources": [],
+        "authority_tiers": [],
+        "finding_codes": [
+          "PRIOR_PIID_FROM_INCUMBENT_DATA"
+        ]
+      },
+      "evidence": {
+        "legacy": [],
+        "evidence_v1": null
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_questions_due_v1",
+      "canonical_value": "16 April 2026 at 5:00 p.m.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "FA481926R00010004"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "All questions are due no later than Thursday , 1 9 February 2026 at 2 :00 PM CDT"
+          },
+          {
+            "sourceId": "FA481926R00010004",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "the Government has made the determination to reopen the Question and Answer period for one week beginning on the date of this amendment with all questions required to be delivered to the Government by"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "All questions are due no later than Thursday , 1 9 February 2026 at 2 :00 PM CDT | the Government has made the determination to reopen the Question and Answer period for one week beginning on the date of this amendment with all questions required to be delivered to the Government",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_requirement_name_v1",
+      "canonical_value": "MESS ATTENDANT SERVICES AT TYNDALL AFB, FL",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 1 - Performance Work Statement 8 Apr 2026"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "PERFORMANCE WORK STATEMENT (PWS)\nMESS ATTENDANT SERVICES AT TYNDALL AFB, FL"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 1 - Performance Work Statement 8 Apr 2026",
+          "excerpt": "PERFORMANCE WORK STATEMENT (PWS)\nMESS ATTENDANT SERVICES AT TYNDALL AFB, FL",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_set_aside_v1",
+      "canonical_value": "8(a) Small Business Set-Aside",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "Final Questions List Rev - 8 Apr 2026"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15"
+          },
+          {
+            "sourceId": "Final Questions List Rev - 8 Apr 2026",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlined in the solicitation."
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+          "excerpt": "This is a competitive, 8(a) small business set-aside conducted in accordance with the Federal Acquisition Regulation (FAR) parts 12 and 15 | 1 N/A N/A Is this requirement anticipated to still be a 8(a) Small Business set-aside? Set-aside remains consistent with information outlin",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_signals_findings_v1",
+      "canonical_value": null,
+      "canonical_confidence": "high",
+      "resolution_status": "unresolved_absent",
+      "resolution_basis": "no_scalar_value_present",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [],
+        "evidence_v1_sources": [],
+        "authority_tiers": [],
+        "finding_codes": [
+          "AGENCY_NOT_FOUND",
+          "AMENDMENT_STAY_DETECTED",
+          "CLAUSES_NOT_FOUND",
+          "COMPETITION_TYPE_NOT_FOUND",
+          "CONTRACT_SPECIALIST_NOT_FOUND",
+          "CONTRACT_TYPE_NOT_FOUND",
+          "DUE_DATE_NOT_FOUND",
+          "EVALUATION_CRITERIA_NOT_FOUND",
+          "EVALUATION_NOT_FOUND_AFTER_CANONICALIZATION",
+          "KO_NAME_NOT_FOUND",
+          "NAICS_NOT_FOUND",
+          "OFFICE_NOT_FOUND",
+          "PLACE_OF_PERFORMANCE_NOT_FOUND",
+          "PSC_NOT_FOUND",
+          "SOLICITATION_ID_NOT_FOUND",
+          "SOLICITATION_IS_STALLED",
+          "SUBMISSION_CANONICALIZED"
+        ]
+      },
+      "evidence": {
+        "legacy": [],
+        "evidence_v1": null
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking. No populated scalar value was available at this layer."
+    },
+    {
+      "id": "rfp_solicitation_id_v1",
+      "canonical_value": "FA481926R0001",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001",
+          "FA481926R00010004"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "5. SOLICITATION NUMBER ... FA481926R0001"
+          },
+          {
+            "sourceId": "FA481926R00010004",
+            "artifact": "text",
+            "locator": "page:1",
+            "snippet": "9A. AMENDMENT OF SOLICITATION NUMBER\nFA481926R0001"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "5. SOLICITATION NUMBER ... FA481926R0001 | 9A. AMENDMENT OF SOLICITATION NUMBER\nFA481926R0001",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_strategic_intent_v1",
+      "canonical_value": "{\"struggle\":\"Tyndall AFB needs a new contractor in place for Berg-Liles Dining Facility support beginning 1 October 2026 so the 325th Fighter Wing Force Support Squadron can keep the dining facility operating without interruption while retaining full government control of the operation. The documents show the pressure is not just routine food service coverage; it is sustaining a mission-essential feeding operation during a period of growing demand and operational uncertainty. The PWS says workload estimates are based on a projected increase in Tyndall population tied to completion of the base rebuild and incoming uniformed members, with average monthly meals rising across the option years. At the same time, the dining facility must stay open through normal meal periods, holidays, possible midnight meals, one weekend per month with earlier opening, takeout and Grab-N-Go service, reserve/guard training meals, VIP and inspection support, and emergency or extended-hour events. The government also has to preserve strict distinctions between contractor support and Air Force management authority, maintain food safety and sanitation with essentially no tolerance for food safety failures, protect cash accountability, keep government-furnished equipment working, and be able to continue operations through hurricanes, labor disruptions, pandemics, mobilizations, and other crises. In short, the agency’s problem is how to secure reliable, scalable attendant support now for a dining operation that is becoming more heavily used and more operationally critical, without risking service degradation, compliance failures, or loss of continuity during emergencies or contract transition.\",\"intent\":\"The strategic intent is to put in place a long-term, tightly controlled mess attendant support contract that gives Tyndall a dependable workforce and support structure for Berg-Liles from October 2026 through up to five years, with built-in surge and continuity mechanisms, so the base can feed authorized personnel consistently, safely, and at reasonable cost as the installation population grows. The Air Force is not trying to outsource management of the dining facility; the solicitation repeatedly states that operational and management control stays with the 325th FSS. What it wants is a contractor that can execute the labor-intensive support functions—food prep for cold items, serving, cashiering, cleaning, sanitation, housekeeping, maintenance support, takeout/Grab-N-Go, and temporary cooks when directed—while proving in advance that it has the staffing depth, financial capacity, quality controls, and emergency plans to keep the service running from day one. The fact that this is a recompete with a required 30-day phase-in, a transition plan, mission-essential planning, strike planning, and contingency cook capacity shows the government is releasing this contract now to avoid any break in food service support at the next contract turnover and to prepare for increasing steady-state and emergency demand at Tyndall.\",\"solution\":\"The tasks and deliverables are structured to solve that continuity-and-capacity problem in a very direct way. The core service CLIN covers the daily attendant workload: posting menus, preparing cold foods and salad items, stocking lines, serving meals at required flow rates, assembling takeout and Grab-N-Go meals, cleaning tables and dining areas, replenishing beverage and dessert stations, performing cashier functions, and maintaining the interior and exterior appearance of the facility. These tasks address the immediate operational problem of keeping Berg-Liles usable every day without transferring command authority to the contractor.\\n\\nThe staffing requirements solve the risk that the facility could be understaffed as demand rises. Offerors must submit a staffing plan by labor category, hours, and organization chart, and explain how they will recruit, retain, replace, and backfill personnel during absences. That directly addresses uninterrupted service during sickness, leave, turnover, and transition. The workload exhibits showing meal growth over future years and the required guest flow rates make clear that the agency expects the contractor to size staffing for increasing throughput, not just current conditions.\\n\\nThe technical approach requirement solves the problem of contractor misunderstanding. The government requires the offeror to address the PWS task paragraphs in detail, not merely restate them, because Tyndall needs a provider that understands exactly how to support a government-run dining facility under Air Force food-service rules, sanitation standards, and customer eligibility controls.\\n\\nThe quality control requirements solve the problem of service inconsistency and compliance failures. The contractor must submit a Quality Control Plan with roles, authority, defect prevention methods, root-cause and corrective-action procedures, then maintain records and provide monthly Quality Status Reports. This is paired with strict service summary thresholds, including no discrepancies for food safety and sanitation-related objectives. That gives the government a formal mechanism to detect recurring problems quickly and force correction before performance degrades.\\n\\nThe equipment maintenance and repair tasks solve the risk of service interruption caused by equipment failure. The contractor must perform preventive maintenance, submit an equipment maintenance plan within 30 days of award, report malfunctions, initiate repairs within defined urgency windows, provide cost estimates for larger repairs, obtain multiple quotes for repairs over $5,000, and support both minor and major repairs on listed government equipment. Because meal service depends on refrigeration, cooking, serving, and warewashing equipment, this maintenance structure is essential to keeping the dining facility operational.\\n\\nThe contingency and mission-essential tasks solve the base’s emergency continuity problem. Separate CLINs and plan requirements cover midnight meals, extended weekend hours, contingency cooks, and mission-essential services. The Mission Essential Services Plan must explain how the contractor will maintain service during emergencies, including extended events and pandemics, with rapid mobilization and safety communication. The strike plan must explain how alternate labor will be obtained, what services may be affected, how badges will be collected, and how government property will be protected. Hurricane and inclement-weather provisions also require the contractor to continue or extend service as directed. Together these elements show the agency is trying to guarantee feeding capability during crises rather than only in normal operations.\\n\\nThe transition deliverables solve the immediate timing problem of recompete turnover. The PWS requires a phase-in transition plan for the 30 days before start date so the contractor can begin on 1 October 2026 without degradation from the previous contract, and it also requires incumbent familiarization for phase-out. This indicates the government’s concern is not theoretical performance later on, but uninterrupted service at the handoff.\\n\\nFinally, the pricing structure supports the agency’s operational intent. Fixed-price core services establish predictable daily support, while separate NTE CLINs for maintenance, consumables, mission-essential events, extended hours, and contingency cooks give the government controlled flexibility to fund unusual demands without rewriting the basic service model. Overall, the tasks and deliverables are designed to give Tyndall a contractor that can absorb rising workload, maintain standards, and keep feeding operations going under both routine and crisis conditions while the Air Force retains command of the facility.\"}",
+      "canonical_confidence": "medium",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "medium"
+        ],
+        "legacy_source_ids": [
+          "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/signals/strategic_intent.v1"
+        ],
+        "evidence_v1_sources": [
+          "doc:0177462da0a1c0fd9235647cbab33daf03ac5d709fa3f6232659d71ea75fde0f.pdf:corpus; doc:05441b319f4e0a62bb0c52d1bbbc44b2f14728297703130fa16982f44f04f589.pdf:corpus; doc:4f25a7b3ec56735cc9a5e9ff1517af2f1f8fe07fd1d2736a20b553b0e44ffc6b.pdf:corpus; doc:5eef9b2e7863fbb3a00bb82c54728b5431db620a4e0f5353d19d771c69ad2a78.pdf:corpus; doc:b3dc8ce2249a56e152247a4b7002c10d000ba54d71a7a650b65ec1086bed226c.pdf:corpus; doc:b5cc131a648230d4a289532dd48f93804197510d0dd4fdc8362617806f0160d2.pdf:corpus; doc:dc7de68fc6aa7e40db1a48a6bcd4f3bf54132a3b519c07f6621fcfe4bc9b7eb2.pdf:corpus"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/signals/strategic_intent.v1",
+            "artifact": "text",
+            "locator": "spanHashes:27e8dc1842ffc52968afd7134b80f39a681014268abc55d7d7a7b247305d9e40,9a08974256a5dbdf160a8ffa9868cbe5600275d1b820c8bfc8df509d1d2d16db,80723c470c05357a35d12206f04a6bc3dcaf7a8ad1cd40290d0b054f40045751",
+            "snippet": "Tyndall AFB needs a new contractor in place for Berg-Liles Dining Facility support beginning 1 October 2026 so the 325th Fighter Wing Force Support Squadron can keep the dining facility operating with"
+          }
+        ],
+        "evidence_v1": {
+          "source": "doc:0177462da0a1c0fd9235647cbab33daf03ac5d709fa3f6232659d71ea75fde0f.pdf:corpus; doc:05441b319f4e0a62bb0c52d1bbbc44b2f14728297703130fa16982f44f04f589.pdf:corpus; doc:4f25a7b3ec56735cc9a5e9ff1517af2f1f8fe07fd1d2736a20b553b0e44ffc6b.pdf:corpus; doc:5eef9b2e7863fbb3a00bb82c54728b5431db620a4e0f5353d19d771c69ad2a78.pdf:corpus; doc:b3dc8ce2249a56e152247a4b7002c10d000ba54d71a7a650b65ec1086bed226c.pdf:corpus; doc:b5cc131a648230d4a289532dd48f93804197510d0dd4fdc8362617806f0160d2.pdf:corpus; doc:dc7de68fc6aa7e40db1a48a6bcd4f3bf54132a3b519c07f6621fcfe4bc9b7eb2.pdf:corpus",
+          "excerpt": "Tyndall AFB needs a new contractor in place for Berg-Liles Dining Facility support beginning 1 October 2026 so the 325th Fighter Wing Force Support Squadron can keep the dining facility operating without interruption while retaining full government control of the operation. The d",
+          "spanHashes": [
+            "27e8dc1842ffc52968afd7134b80f39a681014268abc55d7d7a7b247305d9e40",
+            "9a08974256a5dbdf160a8ffa9868cbe5600275d1b820c8bfc8df509d1d2d16db",
+            "80723c470c05357a35d12206f04a6bc3dcaf7a8ad1cd40290d0b054f40045751",
+            "a228c299f34ae9645a91031da0feb7f2c635606ca07544ac3583457c7450f374",
+            "ecfa68c3d3e564d93cebf287384e3b31860d71a2cab30c0b5df220f0b80aa3fb",
+            "e04854316e65364920885c2d9aa5707c3d1978e362f2e65459472201b0657e77",
+            "c9c51d674e261ca4a284a16987f3c43e31b4529581b8c67d83c8f6693a52f99b",
+            "5edd249652b5983bedd1abb9f357e7fe50d7bea8364fdc762c94aece2906489a"
+          ]
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_submission_destination_v1",
+      "canonical_value": "https://piee.eb.mil;",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json"
+        ],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [
+          4
+        ],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json",
+            "artifact": "text",
+            "locator": "spanHashes:6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da",
+            "snippet": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents,…"
+          }
+        ],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents, including the SLA’s prop osal, with employees of the United States Department o…",
+          "spanHashes": [
+            "6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da"
+          ]
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_submission_format_v1",
+      "canonical_value": "Submit proposals electronically only via the Solicitation Module within PIEE (https://piee.eb.mil); proposals submitted outside the PIEE Solicitation Module will not be considered; paper copies will not be accepted. Volumes shall be developed in Microsoft Word and Excel (Office 2016 or more recent); Word may be converted to PDF, but Excel documents shall remain in Excel format. File names must include the solicitation number, proposal volume number, and offeror CAGE code.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Proposals must be received by 325 CONS/PKB via the Solicitation Module within the Procurement Integrated Enterpris e Environment (PIEE) at https://piee.eb.mil;"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "PROPOSALS SHALL BE SUBMITTED ELECTRONICALLY ONLY; PAPER COPIES WILL NOT BE ACCEPTED."
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "All volumes shall be developed in Microsoft Word and Excel (version Office 2016 or more recent, e.g. .docx, .xlsx) – Word documents may be converted to PDF, but Excel documents shall remain in Excel f"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The file name of electronic documents shall include the solicitation number, proposal volume number and offeror's CAGE code"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Proposals submitted outside of the Solicitation Module of PIEE will not be considered for award."
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "Proposals must be received by 325 CONS/PKB via the Solicitation Module within the Procurement Integrated Enterpris e Environment (PIEE) at https://piee.eb.mil; | PROPOSALS SHALL BE SUBMITTED ELECTRONICALLY ONLY; PAPER COPIES WILL NOT BE ACCEPTED. | All volumes shall be developed ",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_submission_instructions_v1",
+      "canonical_value": "SUBMISSION OF PROPOSAL: Proposals shall be submitted via the Solicitation Module within the Procurement Integrated Enterprise Environment (PIEE) at https://piee.eb.mil; no later than the date and time specified in Block 8 on the f",
+      "canonical_confidence": "low",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "low"
+        ],
+        "legacy_source_ids": [
+          "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json"
+        ],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [
+          4
+        ],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json",
+            "artifact": "text",
+            "locator": "spanHashes:6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da",
+            "snippet": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents,…"
+          }
+        ],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents, including the SLA’s prop osal, with employees of the United States Department o…",
+          "spanHashes": [
+            "6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da"
+          ]
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_submission_method_v1",
+      "canonical_value": "PORTAL",
+      "canonical_confidence": "low",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "low"
+        ],
+        "legacy_source_ids": [
+          "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json"
+        ],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [
+          4
+        ],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "runs/run_85024b98-a52b-4ef0-8aad-858089b4734e/corpus/corpus.v1.json",
+            "artifact": "text",
+            "locator": "spanHashes:6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da",
+            "snippet": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents,…"
+          }
+        ],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "mbers of the Air Force procurement team may, at any point during the source selection process and without notice to the SLA, directly communicate and share source selection information and documents, including the SLA’s prop osal, with employees of the United States Department o…",
+          "spanHashes": [
+            "6b60c3c24ec82ac6632181031dd85c445c57eb45dc14685bc45156013a4956da"
+          ]
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_tech_factors_v1",
+      "canonical_value": "Technical Subfactor 1: Staffing Plan; Technical Subfactor 2: Technical Approach; Technical Subfactor 3: Quality Control Plan; Technical Subfactor 4: Mission Essential Service Plan. Technical subfactors are evaluated Acceptable/Unacceptable, and an unacceptable rating in one or more subfactors makes the overall technical evaluation unacceptable.",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation"
+        ],
+        "evidence_v1_sources": [
+          "Attachment 8 - Addendum to FAR 52.212-1 - Instructions"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "The offeror's technical volume shall address their experience and their proposed approach for meeting the minimum requirements of the following four subfactors: (1) Staffing plan; (2) Technical Approa"
+          },
+          {
+            "sourceId": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "A rating of unacceptable in one or more of the technical subfactors will constitute an overall rating of unacceptable for the technical evaluation."
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Technical Acceptable/Unacceptable Ratings"
+          },
+          {
+            "sourceId": "Attachment 9 - Addendum to FAR 52.212-2 - Evaluation",
+            "artifact": "text",
+            "locator": "page:0",
+            "snippet": "Technical Subfactor 1: Staffing Plan b. Technical Subfactor 2: Technical Approach c. Technical Subfactor 3: Quality Control Plan d. Technical Subfactor 4: Mission Essential Plan"
+          }
+        ],
+        "evidence_v1": {
+          "source": "Attachment 8 - Addendum to FAR 52.212-1 - Instructions",
+          "excerpt": "The offeror's technical volume shall address their experience and their proposed approach for meeting the minimum requirements of the following four subfactors: (1) Staffing plan; (2) Technical Approach; (3) Quality Control Plan ; and (4) Mission Essential Service Plan. | A ratin",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "rfp_title_v1",
+      "canonical_value": "Tyndall Air Force Base, Florida Mess Attendant Recompete",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [
+          "FA481926R0001"
+        ],
+        "evidence_v1_sources": [
+          "FA481926R0001"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [
+          {
+            "sourceId": "FA481926R0001",
+            "artifact": "text",
+            "locator": "page:2",
+            "snippet": "Solicitation/Contract Form Tyndall Air Force Base, Florida Mess Attendant Recompete"
+          }
+        ],
+        "evidence_v1": {
+          "source": "FA481926R0001",
+          "excerpt": "Solicitation/Contract Form Tyndall Air Force Base, Florida Mess Attendant Recompete",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "solicitation_is_stalled_v1",
+      "canonical_value": true,
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [],
+        "finding_codes": []
+      },
+      "evidence": {
+        "legacy": [],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "ntractual vehicle (for example, an IDIQ “D” type contract per FAR Subpart 16.5, Indefinite - Delivery Contracts), performance is demonstrated at the order level, i.e., a Delivery Order (DO)/Task Order (TO ). Therefore, the Offeror shall submit the individual DO/TO (or series of orders for the same e",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    },
+    {
+      "id": "solicitation_status_alert_v1",
+      "canonical_value": "{\"alert\":\"🚨 ALERT: PROTEST STATUS DETECTED — Solicitation stalled\",\"solicitation_is_stalled\":true,\"keywords\":[\"indefinite\",\"protest\",\"stayed\",\"suspended\",\"suspension\"],\"stay_language\":false,\"source_document\":\"corpus\",\"excerpt\":\"ntractual vehicle (for example, an IDIQ “D” type contract per FAR Subpart 16.5, Indefinite - Delivery Contracts), performance is demonstrated at the order level, i.e., a Delivery Order (DO)/Task Order (TO ). Therefore, the Offeror shall submit the individual DO/TO (or series of orders for the same e\"}",
+      "canonical_confidence": "high",
+      "resolution_status": "passthrough",
+      "resolution_basis": "single_final_signal",
+      "source_summary": {
+        "candidate_count": 1,
+        "confidence_values": [
+          "high"
+        ],
+        "legacy_source_ids": [],
+        "evidence_v1_sources": [
+          "corpus"
+        ],
+        "authority_tiers": [],
+        "finding_codes": [
+          "AMENDMENT_STAY_DETECTED"
+        ]
+      },
+      "evidence": {
+        "legacy": [],
+        "evidence_v1": {
+          "source": "corpus",
+          "excerpt": "ntractual vehicle (for example, an IDIQ “D” type contract per FAR Subpart 16.5, Indefinite - Delivery Contracts), performance is demonstrated at the order level, i.e., a Delivery Order (DO)/Task Order (TO ). Therefore, the Offeror shall submit the individual DO/TO (or series of orders for the same e",
+          "spanHashes": []
+        }
+      },
+      "alternates": [],
+      "notes": "Final phase53 signal preserved without additional winner-picking.",
+      "preservation": {
+        "immutable": true,
+        "contract": "passthrough_single_final_or_promoted"
+      }
+    }
+  ],
+  "summary": {
+    "total_signal_ids": 42,
+    "signals_with_alternates": 1,
+    "status_counts": {
+      "canonical_explicit": 0,
+      "canonical_derived": 1,
+      "unresolved_absent": 1,
+      "unresolved_conflict": 0,
+      "passthrough": 39,
+      "resolved_with_promotion": 1
+    }
+  }
+}

@@ -3,3 +3,5 @@
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+reference_aegis_extraction_DO_NOT_IMPORT
+data/runs/
